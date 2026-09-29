@@ -34,20 +34,21 @@ impl SwitcherService {
             if let Ok(procs) = process_mgr.enumerate() {
                 for p in &procs {
                     let name = p.name.to_lowercase();
-                    // Task runner / build / worker process names that mean work is in progress
+                    // Active compilation, build, script or AI subagent runner processes
                     if matches!(
                         name.as_str(),
-                        "powershell.exe"
-                            | "pwsh.exe"
-                            | "cmd.exe"
-                            | "node.exe"
-                            | "cargo.exe"
+                        "cargo.exe"
                             | "rustc.exe"
                             | "git.exe"
                             | "python.exe"
                             | "python3.exe"
+                            | "node.exe"
                             | "agy.exe"
                             | "docker.exe"
+                            | "cl.exe"
+                            | "link.exe"
+                            | "make.exe"
+                            | "tsc.exe"
                     ) {
                         return true;
                     }
@@ -55,7 +56,7 @@ impl SwitcherService {
             }
         }
 
-        // 2. Brain Activity Check: If transcript or session changed within last 120 seconds
+        // 2. Brain Activity Check: Recursively inspect ~/.gemini/antigravity/brain files
         if let Some(user_profile) = std::env::var_os("USERPROFILE") {
             let brain_dir = std::path::Path::new(&user_profile)
                 .join(".gemini")
@@ -63,8 +64,12 @@ impl SwitcherService {
                 .join("brain");
             if brain_dir.is_dir() {
                 let now = std::time::SystemTime::now();
-                if let Ok(entries) = std::fs::read_dir(&brain_dir) {
-                    for entry in entries.flatten() {
+                for entry in walkdir::WalkDir::new(&brain_dir)
+                    .max_depth(3)
+                    .into_iter()
+                    .flatten()
+                {
+                    if entry.file_type().is_file() {
                         if let Ok(meta) = entry.metadata() {
                             if let Ok(modified) = meta.modified() {
                                 if let Ok(elapsed) = now.duration_since(modified) {
@@ -184,7 +189,11 @@ impl SwitcherService {
                     } else {
                         candidate = Some((profile.metadata.profile_id, cand_5h, cand_weekly));
                     }
-                } else if (cand_5h > rem_5h || cand_3p_5h > rem_3p_5h) && cand_5h > 0.10 {
+                } else if (cand_5h > rem_5h || cand_3p_5h > rem_3p_5h)
+                    && cand_5h >= 0.15
+                    && cand_weekly >= 0.05
+                    && cand_3p_weekly >= 0.05
+                {
                     if fallback_candidate.is_none() {
                         fallback_candidate = Some(profile.metadata.profile_id);
                     }

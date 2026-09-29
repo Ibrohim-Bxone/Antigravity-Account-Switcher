@@ -560,6 +560,22 @@ export default function App() {
   };
 
   const handleExitMini = async () => {
+    if (windowLabel === "mini" || (typeof window !== "undefined" && window.location.hash === "#mini")) {
+      try {
+        await invoke("hide_mini_window");
+        const { getAllWindows } = await import("@tauri-apps/api/window");
+        const allWins = await getAllWindows();
+        const mainWin = allWins.find((w) => w.label === "main");
+        if (mainWin) {
+          await mainWin.show();
+          await mainWin.setFocus();
+        }
+      } catch (e) {
+        console.warn("hide_mini_window error:", e);
+      }
+      return;
+    }
+
     setView("dashboard");
     try {
       await invoke("exit_mini_mode");
