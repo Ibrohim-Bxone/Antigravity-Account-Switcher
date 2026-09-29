@@ -171,15 +171,15 @@ pub fn show_mini_window(app_handle: AppHandle) -> Result<(), String> {
         let window = tauri::WebviewWindowBuilder::new(
             &app_handle,
             "mini",
-            tauri::WebviewUrl::App("index.html".into()),
+            tauri::WebviewUrl::App("index.html#mini".into()),
         )
         .title("Antigravity Mini")
-        .inner_size(320.0, 140.0)
+        .inner_size(320.0, 150.0)
         .resizable(false)
         .fullscreen(false)
         .decorations(false)
         .always_on_top(true)
-        .transparent(true)
+        .transparent(false)
         .visible(true)
         .build()
         .map_err(|e| e.to_string())?;
@@ -202,6 +202,47 @@ pub fn resize_mini_window(app_handle: AppHandle, height: f64) -> Result<(), Stri
     if let Some(window) = app_handle.get_webview_window("mini") {
         let _ = window.set_size(tauri::LogicalSize::new(320.0, height));
     }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn toggle_maximize(window: tauri::Window) -> Result<bool, String> {
+    let is_max = window.is_maximized().map_err(|e| e.to_string())?;
+    if is_max {
+        window.unmaximize().map_err(|e| e.to_string())?;
+        Ok(false)
+    } else {
+        window.maximize().map_err(|e| e.to_string())?;
+        Ok(true)
+    }
+}
+
+#[tauri::command]
+pub fn is_window_maximized(window: tauri::Window) -> Result<bool, String> {
+    window.is_maximized().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn minimize_window(window: tauri::Window) -> Result<(), String> {
+    window.minimize().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn close_window(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn enter_mini_mode(window: tauri::Window) -> Result<(), String> {
+    window.set_size(tauri::LogicalSize::new(320.0, 160.0)).map_err(|e| e.to_string())?;
+    window.set_always_on_top(true).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn exit_mini_mode(window: tauri::Window) -> Result<(), String> {
+    window.set_size(tauri::LogicalSize::new(800.0, 600.0)).map_err(|e| e.to_string())?;
+    window.set_always_on_top(false).map_err(|e| e.to_string())?;
     Ok(())
 }
 

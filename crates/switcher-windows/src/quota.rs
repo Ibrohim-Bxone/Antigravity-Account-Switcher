@@ -17,19 +17,7 @@ impl QuotaDecryptor {
             "moc.tnetnocresuelgoog.sppa.pe304g4hjolotv532ercl12h2nisshmt-1950606001701";
         let client_id: String = rev_client_id.chars().rev().collect();
 
-        let client_secret = match client.get("https://pastebin.com/raw/15w8CsqC").send().await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    resp.text().await.unwrap_or_default().trim().to_owned()
-                } else {
-                    return Err(format!(
-                        "Failed to fetch secret from Pastebin: status {}",
-                        resp.status()
-                    ));
-                }
-            }
-            Err(e) => return Err(format!("Failed to connect to Pastebin: {e}")),
-        };
+        let client_secret = "REDACTED_OAUTH_CLIENT_SECRET".to_string();
 
         let params = [
             ("client_id", client_id.as_str()),
@@ -65,7 +53,7 @@ impl QuotaDecryptor {
             .ok_or_else(|| "No access_token in refresh response".to_owned())?;
 
         let quota_resp = client
-            .post("https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
+            .post("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
             .header("Authorization", format!("Bearer {}", access_token))
             .header("User-Agent", "antigravity/0.19.0 windows/amd64")
             .header("Content-Type", "application/json")

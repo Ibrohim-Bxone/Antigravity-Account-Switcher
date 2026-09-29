@@ -16,5 +16,6 @@ pub use service::{PendingSwitch, SwitchOutcome, SwitcherService};
 
 pub use uninstall::{uninstall_app_and_self_delete, wipe_app_data_and_relaunch};
 pub use webview::{
-    check_and_install_webview2, check_single_instance, has_active_webview_processes,
+    check_and_install_webview2, check_single_instance, enable_window_resize,
+    has_active_webview_processes,
 };

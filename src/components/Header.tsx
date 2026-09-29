@@ -3,7 +3,7 @@ import { AppMark, Icon } from "./Icons";
 import { StatusPill, type StatusTone } from "./StatusPill";
 import { t } from "../i18n";
 
-export type AppView = "dashboard" | "settings" | "devtools";
+export type AppView = "dashboard" | "settings" | "devtools" | "mini";
 
 interface HeaderProps {
   view: AppView;

@@ -65,12 +65,69 @@ fn handle_client(
                 send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
             }
         }
+    } else if method == "GET" && path == "/api/v1/state" {
+        match tauri::async_runtime::block_on(async {
+            service.app_state_live(env!("CARGO_PKG_VERSION")).await
+        }) {
+            Ok(state) => {
+                let json = serde_json::to_string(&state)?;
+                send_response(&mut stream, 200, "OK", &json)?;
+            }
+            Err(e) => {
+                let err_msg = format!(r#"{{"error":{:?}}}"#, e.to_string());
+                send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
+            }
+        }
+    } else if method == "POST" && path == "/api/v1/smart-switch" {
+        match tauri::async_runtime::block_on(async {
+            service.check_and_perform_smart_switch().await
+        }) {
+            Ok(_) => {
+                send_response(&mut stream, 200, "OK", r#"{"success":true,"message":"Smart switch checked"}"#)?;
+            }
+            Err(e) => {
+                let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
+                send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
+            }
+        }
     } else if method == "POST" && path == "/api/v1/app/show" {
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.show();
             let _ = window.set_focus();
         }
         send_response(&mut stream, 200, "OK", r#"{"success":true}"#)?;
+    } else if method == "POST" && path == "/api/v1/unlock" {
+        let body = if let Some(idx) = request_str.find("\r\n\r\n") {
+            &request_str[idx + 4..]
+        } else if let Some(idx) = request_str.find("\n\n") {
+            &request_str[idx + 2..]
+        } else {
+            ""
+        };
+        #[derive(serde::Deserialize)]
+        struct UnlockReq {
+            password: String,
+        }
+        match serde_json::from_str::<UnlockReq>(body.trim()) {
+            Ok(req) => match service.unlock_app(&req.password) {
+                Ok(_) => {
+                    send_response(
+                        &mut stream,
+                        200,
+                        "OK",
+                        r#"{"success":true,"message":"Application unlocked"}"#,
+                    )?;
+                }
+                Err(e) => {
+                    let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
+                    send_response(&mut stream, 400, "Bad Request", &err_msg)?;
+                }
+            },
+            Err(e) => {
+                let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
+                send_response(&mut stream, 400, "Bad Request", &err_msg)?;
+            }
+        }
     } else if method == "POST"
         && path.starts_with("/api/v1/profiles/")
         && path.ends_with("/activate")

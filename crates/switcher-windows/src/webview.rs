@@ -290,21 +290,18 @@ pub fn check_single_instance() {
         if handle != ptr::null_mut() {
             let err = GetLastError();
             if err == ERROR_ALREADY_EXISTS {
-                let is_polish =
-                    windows_sys::Win32::Globalization::GetUserDefaultUILanguage() == 0x0415;
-                let title = get_translation("err_single_instance_title", is_polish);
-                let msg = get_translation("err_single_instance_msg", is_polish);
-
-                let title_wide = encode_wide(&title);
-                let msg_wide = encode_wide(&msg);
-
-                MessageBoxW(
-                    ptr::null_mut(),
-                    msg_wide.as_ptr(),
+                let title_wide = encode_wide("Antigravity Account Switcher");
+                let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                    ptr::null(),
                     title_wide.as_ptr(),
-                    MB_OK | MB_ICONERROR,
                 );
-
+                if hwnd != ptr::null_mut() {
+                    windows_sys::Win32::UI::WindowsAndMessaging::ShowWindow(
+                        hwnd,
+                        windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
+                    );
+                    windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+                }
                 std::process::exit(0);
             }
         }
@@ -404,3 +401,25 @@ pub fn has_active_webview_processes() -> bool {
 pub fn has_active_webview_processes() -> bool {
     true
 }
+
+#[cfg(windows)]
+pub fn enable_window_resize(hwnd_val: isize) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetWindowLongW, GWL_STYLE, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_THICKFRAME,
+    };
+    if hwnd_val == 0 {
+        return;
+    }
+    unsafe {
+        let style = GetWindowLongW(hwnd_val as _, GWL_STYLE);
+        SetWindowLongW(
+            hwnd_val as _,
+            GWL_STYLE,
+            style | WS_THICKFRAME as i32 | WS_MINIMIZEBOX as i32 | WS_MAXIMIZEBOX as i32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn enable_window_resize(_hwnd_val: isize) {}
+

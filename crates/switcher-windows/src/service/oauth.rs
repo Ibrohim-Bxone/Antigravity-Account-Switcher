@@ -150,32 +150,7 @@ impl SwitcherService {
         );
         let client = reqwest::Client::new();
 
-        self.logger
-            .info(None, "oauth", "Loading external client configuration...");
-        let config_url = "https://pastebin.com/raw/15w8CsqC";
-        let config_res = client.get(config_url).send().await;
-
-        let client_secret = match config_res {
-            Ok(resp) => {
-                let text = resp.text().await.unwrap_or_default().trim().to_string();
-                if text.starts_with("GOCSPX-") {
-                    text
-                } else {
-                    return Err(SwitcherError::Message(
-                        "Error during authorization configuration verification.".to_owned(),
-                    ));
-                }
-            }
-            Err(e) => {
-                let err_msg = format!("Failed to fetch authorization configuration: {}", e);
-                self.logger.error(
-                    None,
-                    "oauth",
-                    format!("Configuration load error: {}", err_msg),
-                );
-                return Err(SwitcherError::Message(err_msg));
-            }
-        };
+        let client_secret = "REDACTED_OAUTH_CLIENT_SECRET".to_string();
 
         let params = [
             ("client_id", client_id.as_str()),
@@ -256,11 +231,14 @@ impl SwitcherService {
         let token_expiry = now + chrono::Duration::seconds(expires_in);
 
         let credential_json = serde_json::json!({
-            "access_token": access_token,
-            "token_type": "Bearer",
-            "refresh_token": refresh_token,
-            "expiry": token_expiry.to_rfc3339(),
-            "auth_method": "oauth2"
+            "auth_method": "consumer",
+            "id_token": id_token,
+            "token": {
+                "access_token": access_token,
+                "token_type": "Bearer",
+                "refresh_token": refresh_token,
+                "expiry": token_expiry.to_rfc3339()
+            }
         });
         let credential_bytes = serde_json::to_vec(&credential_json)
             .map_err(|e| SwitcherError::Message(e.to_string()))?;

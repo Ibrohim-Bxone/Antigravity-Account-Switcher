@@ -14,11 +14,12 @@ body.mini-window-body #root {
   height: 100% !important;
   min-height: 100% !important;
   width: 100% !important;
-  background: transparent !important;
-  background-color: transparent !important;
+  background: #0d1117 !important;
+  background-color: #0d1117 !important;
   background-image: none !important;
   box-shadow: none !important;
   border: none !important;
+  overflow: hidden !important;
 }
 
 body.mini-window-body {
@@ -31,12 +32,10 @@ body.mini-window-body {
 .mini-window-card {
   width: 100% !important;
   height: 100% !important;
-  background: rgba(13, 17, 23, 0.95);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  background: #0d1117 !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.7);
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
@@ -77,7 +76,7 @@ body.mini-window-body {
 
 .mini-header-controls {
   position: relative;
-  width: 52px;
+  width: 72px;
   height: 20px;
   display: flex;
   align-items: center;

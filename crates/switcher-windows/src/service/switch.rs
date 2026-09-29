@@ -245,7 +245,11 @@ impl SwitcherService {
         } else {
             self.credentials.protect(&active_credential)?
         };
-        let target_credential = self.load_profile_credential(target_profile_id, password)?;
+        let mut target_credential = self.load_profile_credential(target_profile_id, password)?;
+        if let Ok(normalized) = super::helpers::normalize_antigravity_credential(&target_credential) {
+            target_credential = normalized.clone();
+            let _ = self.save_profile_credentials(target_profile_id, &normalized);
+        }
 
         let started = Instant::now();
         let mut lock = SwitchLock::new(from_profile_id, target_profile_id);
@@ -424,7 +428,7 @@ impl SwitcherService {
         &self,
         lock: &mut SwitchLock,
         active_credential: &[u8],
-        protected: &crate::ProtectedCredential,
+        _protected: &crate::ProtectedCredential,
     ) -> Result<()> {
         let profile_dir = self.paths.profile_dir(lock.from_profile_id);
         fs::create_dir_all(&profile_dir)
