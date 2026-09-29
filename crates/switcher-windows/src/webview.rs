@@ -334,7 +334,7 @@ pub fn has_active_webview_processes() -> bool {
 
     static CACHED_HANDLES: Mutex<Vec<SafeHandle>> = Mutex::new(Vec::new());
 
-    let mut handles = CACHED_HANDLES.lock().unwrap();
+    let mut handles = CACHED_HANDLES.lock().unwrap_or_else(|e| e.into_inner());
 
     if !handles.is_empty() {
         let mut active_found = false;

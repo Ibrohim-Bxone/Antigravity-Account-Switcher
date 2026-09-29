@@ -64,7 +64,17 @@ impl SwitcherService {
         paths.ensure()?;
         let logger = AuditLogger::new(paths.logs.join("switcher.log"), paths.log_archive.clone())?;
         let mut config = if paths.config.is_file() {
-            switcher_core::load_json::<PersistentConfig>(&paths.config)?
+            match switcher_core::load_json::<PersistentConfig>(&paths.config) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    logger.warn(
+                        None,
+                        "config",
+                        format!("Failed to read config.json, resetting to defaults: {}", e),
+                    );
+                    PersistentConfig::default()
+                }
+            }
         } else {
             PersistentConfig::default()
         };

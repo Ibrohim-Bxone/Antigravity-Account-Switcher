@@ -210,4 +210,24 @@ mod tests {
         std::fs::remove_file(profile_dir.join("metadata.enc")).unwrap();
         assert!(service.preflight_target_identity(profile_id).is_err());
     }
+
+    #[tokio::test]
+    async fn test_smart_switch_live_diagnostics() {
+        use super::super::{SwitcherPaths, SwitcherService};
+
+        let temp = tempfile::tempdir().unwrap();
+        let paths = SwitcherPaths::from_root(temp.path().to_path_buf()).unwrap();
+        paths.ensure().unwrap();
+        let service = SwitcherService::new(paths).unwrap();
+
+        println!("Calling is_agent_working()...");
+        let working = service.is_agent_working();
+        println!("is_agent_working() returned: {}", working);
+
+        println!("Calling check_and_perform_smart_switch()...");
+        let res = service.check_and_perform_smart_switch().await;
+        println!("check_and_perform_smart_switch() returned: {:?}", res);
+        assert!(res.is_ok());
+    }
 }
+
