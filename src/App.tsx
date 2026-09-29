@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   addCurrentProfile,
   cancelSwitch,
@@ -135,11 +136,17 @@ const errorMessage = (error: unknown): string => {
 
 
 export default function App() {
-  const [windowLabel, setWindowLabel] = useState<string>("main");
+  const [windowLabel, setWindowLabel] = useState<string>(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#mini") {
+      return "mini";
+    }
+    return "main";
+  });
 
   useEffect(() => {
     try {
-      setWindowLabel(getCurrentWindow().label);
+      const current = getCurrentWindow().label;
+      setWindowLabel(current);
     } catch (e) {
       console.warn("Failed to get window label", e);
     }
@@ -543,8 +550,26 @@ export default function App() {
     setDeleteTarget(null);
   };
 
-  if (windowLabel === "mini") {
-    return <MiniApp />;
+  const handleOpenMini = async () => {
+    setView("mini");
+    try {
+      await invoke("enter_mini_mode");
+    } catch (e) {
+      console.warn("enter_mini_mode error:", e);
+    }
+  };
+
+  const handleExitMini = async () => {
+    setView("dashboard");
+    try {
+      await invoke("exit_mini_mode");
+    } catch (e) {
+      console.warn("exit_mini_mode error:", e);
+    }
+  };
+
+  if (view === "mini" || windowLabel === "mini" || (typeof window !== "undefined" && window.location.hash === "#mini")) {
+    return <MiniApp onRestore={handleExitMini} />;
   }
 
   if (loading) {
@@ -599,9 +624,7 @@ export default function App() {
         onDemoScenarioChange={handleDemoScenario}
         onViewChange={setView}
         onBrandClick={() => handleOpenAbout("about")}
-        onOpenMini={() => {
-          showMiniWindow().catch((err) => console.error("Failed to open mini window", err));
-        }}
+        onOpenMini={handleOpenMini}
         view={view}
       />
 

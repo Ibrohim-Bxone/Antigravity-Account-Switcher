@@ -12,7 +12,11 @@ import { t } from "../i18n";
 import type { AppState, ProfileSummary } from "../types";
 import { getSwitchStepLabel, getInitials } from "../utils";
 
-export default function MiniApp() {
+interface MiniAppProps {
+  onRestore?: () => void;
+}
+
+export default function MiniApp({ onRestore }: MiniAppProps = {}) {
   const [state, setState] = useState<AppState | null>(null);
   const [workingAction, setWorkingAction] = useState<string | null>(null);
   const mounted = useRef(true);
@@ -98,9 +102,16 @@ export default function MiniApp() {
 
   const handleClose = async () => {
     try {
-      await hideMiniWindow();
+      const win = getCurrentWindow();
+      if (win.label === "mini") {
+        await hideMiniWindow();
+      } else if (onRestore) {
+        onRestore();
+      } else {
+        await win.close();
+      }
     } catch (e) {
-      console.error("Failed to hide mini window", e);
+      console.error("Failed to close/restore mini window", e);
     }
   };
 
@@ -206,6 +217,16 @@ export default function MiniApp() {
                 >
                   <Icon name="minus" size={12} />
                 </button>
+                {onRestore && (
+                  <button
+                    className="mini-control-button"
+                    onClick={onRestore}
+                    title="Katta oynaga qaytish"
+                    aria-label="Katta oynaga qaytish"
+                  >
+                    <Icon name="square" size={10} />
+                  </button>
+                )}
                 <button
                   className="mini-control-button mini-control-button--close"
                   onClick={handleClose}

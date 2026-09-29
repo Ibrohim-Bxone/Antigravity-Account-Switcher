@@ -26,10 +26,7 @@ pub(crate) fn hash_directory(path: &Path) -> Result<String> {
     for entry in WalkDir::new(path).follow_links(false).into_iter() {
         let entry = entry.map_err(|error| SwitcherError::Message(error.to_string()))?;
         if entry.file_type().is_symlink() {
-            return Err(SwitcherError::InvalidConfiguration(format!(
-                "Symlinks/reparse points are not supported in the profile: {}",
-                entry.path().display()
-            )));
+            continue;
         }
         let relative = entry.path().strip_prefix(path).unwrap_or(entry.path());
         let kind = if entry.file_type().is_dir() { "d" } else { "f" };

@@ -708,8 +708,8 @@ impl SwitcherService {
                         let (has_valid_cache, cached_val) = {
                             let cache = global_quota_cache().lock().unwrap();
                             let now = std::time::Instant::now();
-                            // Cache quota for 15 minutes (900 seconds)
-                            let cache_duration = std::time::Duration::from_secs(900);
+                            // Cache quota for 1 minute (60 seconds)
+                            let cache_duration = std::time::Duration::from_secs(60);
                             if let Some((cached_quota, cached_time)) = cache.get(email) {
                                 let valid = now.duration_since(*cached_time) < cache_duration;
                                 (valid, Some(cached_quota.clone()))

@@ -1,111 +1,102 @@
-# Antigravity Account Switcher
+# Antigravity Account Switcher Pro ⚡
 
-> A secure, high-performance Windows desktop application built with Tauri 2.x and Rust to manage and swap between multiple Google accounts in Google Antigravity 2.0.
+> **A secure, high-performance Windows desktop application built with Tauri 2.x and Rust to seamlessly manage, auto-switch, and monitor quotas across multiple Google Antigravity 2.0, Claude Pro, and ChatGPT Plus accounts.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#development)
-[![Early Development](https://img.shields.io/badge/Status-Early_Development-orange.svg)](#development)
-
-
-
-> [!CAUTION]
-> **LEGAL DISCLAIMER & TERMS OF USE**
->
-> **1. Educational Use Only:** This application is provided strictly for educational, research, and personal demonstrational purposes.
-> **2. Commercial Use Prohibited:** Commercial use or monetization of this software is prohibited.
-> **3. Disclaimer of Liability:** Under no circumstances shall the developers or contributors be liable for any direct, indirect, incidental, special, or consequential damages (including, but not limited to, loss of data, loss of access, account bans, or service disruptions) arising in any way out of the use, abuse, or misuse of this software. The user accepts all risks and sole responsibility for running this software.
-> **4. Compliance with Third-Party Terms:** The user is solely responsible for ensuring compliance with all applicable terms, including the [Google Terms of Service](https://policies.google.com/terms), [Google Gemini API Terms of Service](https://ai.google.dev/gemini-api/terms), and [Google Anti-Abuse Policies](https://policies.google.com/terms). Programmatic switching of accounts to bypass usage limits or quotas violates Google's policies and may result in the termination of your Google accounts.
->
-> By using this software, you agree to these terms and waive any and all claims against the developer(s).
+[![Tauri 2.x](https://img.shields.io/badge/Tauri-2.x-blue.svg)](https://tauri.app/)
+[![Rust](https://img.shields.io/badge/Rust-MSVC-orange.svg)](https://www.rust-lang.org/)
+[![Safety](https://img.shields.io/badge/Process%20Guardian-Active-success.svg)](#process-guardian)
 
 ---
 
-## Why This Exists
+## 🇺🇿 O'zbekcha Tavsif (Summary in Uzbek)
 
-Google Antigravity 2.0 reads and caches your Google OAuth token *only once* at startup. If you use multiple paid PRO accounts, switching between them manually requires signing out, signing in, and losing your agent conversation history or settings.
+**Antigravity Account Switcher** — Google Antigravity 2.0 (Gemini Pro), Claude Pro (Cursor / Opus 5.5) va ChatGPT Plus (Codex / GPT-4o) hisoblaridagi limitlar, 5-soatlik va haftalik kvotalarni avtomatik nazorat qiluvchi va uzluksiz almashtirib beruvchi professional Windows desktop ilovasi.
 
-**Antigravity Account Switcher** automates this lifecycle. It handles shutting down the editor gracefully, backing up and swapping database states (`state.vscdb`) and agent folders (`.gemini/`), updating the Windows Credential Manager under the hood, and relaunching the app with the target account context intact.
+### 🔥 Asosiy Imkoniyatlar:
+1. **Process Guardian Shield (Jarayonlar Himoyachisi):**
+   - Hech qachon orqa fonda ishlab turgan vazifalar, subagentlar, kompilyatsiya (`cargo`, `node`, `powershell`) yoki faol suhbat paytida hisobni majburiy o'chirib yubormaydi!
+   - Ishlar to'liq yakunlanib, tizim tinch (idle) holatga kelgandagina xavfsiz o'tadi (Deferred Safe Switch).
+2. **Pre-flight Live Token Health Check:**
+   - Yaroqsiz yoki Google tomonida "Verification" (qayta kirish) talab qiladigan hisoblarni avtomatik aniqlaydi va ularga o'tishni bloklaydi. Faqatgina 100% sog'lom va tasdiqlangan hisoblargagina o'tadi.
+3. **Sessiya va Chat Tarixi Uzluksizligi:**
+   - Hisob almashtirilganda ham ochiq turgan chat oynasi, loyiha va `brain/` xotirasi to'liq saqlanib qoladi. Yangi hisob avvalgi suhbat kontekstini to'liq davom ettiradi.
+4. **Dinamik 5-Soatlik va Haftalik Rolling Limitlar:**
+   - Claude va ChatGPT hisoblarining 5-soatlik oynasi va aniq tiklanish vaqti (`Resets at 7:11 PM` yoki `Resets in 4 hr 17 min`) real vaqtda orqaga hisoblab boriladi va vaqt yetganda avtomatik 100% ga tiklanadi.
+5. **In-Window Seamless Mini Mode:**
+   - Alohida oq ramkasiz, to'g'ridan-to'g'ri asosiy oynani ixcham (320x160) mini-vidjetga aylantirish.
+6. **100% Maxfiylik va Xavfsizlik:**
+   - Hech qanday shaxsiy email, parol yoki API kalitlar repoda saqlanmaydi. Windows DPAPI (`CryptProtectData`) va Credential Manager orqali lokal shifrlanadi.
+
+---
+
+## 🇬🇧 English Documentation
+
+### Key Features
+
+*   **Process Guardian**: Monitors Antigravity process trees, subagents, and background terminal workers (`powershell`, `cargo`, `git`, `python`, `node`). Prevents abrupt shutdowns or switches while computational jobs are in progress.
+*   **Token Health Pre-Flight**: Live-validates OAuth tokens prior to activating an account. Skips accounts flagged for security challenges or requiring browser re-verification.
+*   **Session & Context Continuity**: Preserves workspace databases and `.gemini/antigravity/brain` transcripts so ongoing AI reasoning sessions seamlessly resume without context loss.
+*   **Dual-Quota & External AI Monitoring**: Real-time 5-hour rolling recovery windows, weekly allocations, and cloud session credits for Claude Pro (Opus 5.5) and ChatGPT Plus (Codex / GPT-4o).
+*   **Seamless In-Window Mini Mode**: Instant transformation into an ultra-compact widget with always-on-top pinning and fast single-click account swaps.
+*   **DPAPI Enterprise Security**: Inactive profiles are encrypted on disk using Windows Data Protection API (DPAPI) tied to the active Windows user context.
 
 ---
 
 ## Switching Levels (Restart Modes)
 
-Determines the scope and speed of the restart sequence when switching active profiles:
-
-| Level | Name | Est. Time | Speed Multiplier | Mechanism Description |
+| Level | Name | Est. Time | Speed | Description |
 |---|---|---|---|---|
-| **Level 1** | Full Restart | ~17s | *Baseline* | Completely closes and restarts the entire Antigravity 2.0 application. |
-| **Level 1+** | Optimized Restart | ~8s | **3x Faster** | Closes the GUI gracefully but instantly terminates background zombie processes to bypass long OS timeouts. |
-| **Level 2** | Reload | ~5s | **4x Faster** | Keeps the open GUI window and chat history active, terminating and restarting only the language server process (`language_server.exe`). |
-| **Level 2+** | Fast Reload | ~3s | **6x Faster** | Patches the Antigravity installation's `app.asar` archive to reduce the language server's `RESTART_COOLDOWN_MS` constant. |
+| **Level 1** | Full Restart | ~17s | Baseline | Gracefully closes and restarts the entire application. |
+| **Level 1+** | Optimized Restart | ~8s | **3x Faster** | Closes GUI gracefully while instantly stopping idle workers. |
+| **Level 2** | Reload | ~5s | **4x Faster** | Restarts only the internal `language_server.exe` process. |
+| **Level 2+** | Fast Reload | ~3s | **6x Faster** | Patches `app.asar` to reduce language server cooldown timers. |
 
 ---
 
-## Key Features
-
-*   **Smart Switch Engine**: Automatically switches to the saved account with the highest remaining Gemini API limits when the active profile's limits run low (5h limit < 10% or weekly limit < 5%). The switch is automatically blocked if the Antigravity agent is actively running a task.
-*   **Authentication Auto-refresh**: Automatically manages and renews Google sessions in the background. The application renews OAuth access tokens before they expire, avoiding browser login prompts during account swaps.
-*   **Mini Mode Widget**: A compact, always-on-top window interface. Designed to be pinned over other windows for quick, single-click account swaps.
-*   **Durable Failure Recovery**: If a filesystem or API swap operation is interrupted (e.g. power failure), a dedicated **Recovery Screen** blocks access at next startup, allowing the user to safely complete or roll back the transaction.
-
----
-
-## Security & Architecture
-
-*   **Token Protection**: Active credentials are stored securely in the Windows Credential Manager under `gemini:antigravity`. Inactive profiles are encrypted locally on disk via **Windows DPAPI** (`CryptProtectData`) tied to the active Windows user context. Plaintext tokens are never written to log files.
-*   **Localhost Binding**: The background HTTP server binds strictly to `127.0.0.1`. Requests from the editor plugin are authenticated via a secure `Bearer` transport token.
-*   **Anonymized Logs**: Application logs (`logs/switcher.log`) only use UUIDs (`profile_id` / `operation_id`). Plaintext credentials and email addresses never enter the logs.
-*   **Same-Volume Constraint**: Swapping operations require source and destination folders to reside on the same drive volume to ensure atomic directory moves (blocking slow, non-atomic cross-volume copy operations).
-
----
-
-## Architecture Decision Records (ADRs)
-
-Detailed rationale for our design and security decisions can be found in our ADR registry:
-
-*   [ADR-0001: DPAPI for Profile Credentials](docs/decisions/0001-dpapi-profile-credentials.md) — Protecting inactive tokens using Windows DPAPI.
-*   [ADR-0002: Same-Volume Constraint and Hard Fail](docs/decisions/0002-same-volume-hard-fail.md) — Enforcing single-volume operations to ensure atomic renames.
-*   [ADR-0003: Durable Journal for Move Operations](docs/decisions/0003-per-move-operation-journal.md) — Transaction logs via `switcher.lock` for failure recovery.
-*   [ADR-0004: OAuth Refresh Engine Disabled](docs/decisions/0004-oauth-refresh-disabled.md) — *Superseded by ADR-0006*.
-*   [ADR-0005: Dynamic Process Tree Management](docs/decisions/0005-dynamic-process-tree.md) — Dynamic PID resolving to identify and terminate instances.
-*   [ADR-0006: Enabling OAuth Background Refresh Engine](docs/decisions/0006-oauth-refresh-enabled.md) — Secure, background OAuth token renewal.
-*   [ADR-0007: Four-Tier Switch Levels & ASAR Patching](docs/decisions/0007-switch-levels.md) — Switch speed tiers and patching `app.asar`.
-*   [ADR-0008: Standalone Antigravity 2.0 Architectural Alignment](docs/decisions/0008-antigravity-two-architecture.md) — Purging legacy editor code and VS Code extensions.
-*   [ADR-0009: Smart Switch Quota Engine and Thresholds](docs/decisions/0009-smart-switch-limits-thresholds.md) — Background quota checks and safety interlocks.
-
-
-## Development & Setup
+## 🛠️ Building & Development
 
 ### Prerequisites
+*   Windows 10 / 11 (64-bit)
+*   [Node.js](https://nodejs.org/) (v18+) & `npm`
+*   [Rust](https://rustup.rs/) (stable-x86_64-pc-windows-msvc)
+*   Microsoft Visual Studio C++ Build Tools
 
-*   Windows 10 / 11
-*   WebView2 Runtime
-*   Stable Rust (MSVC toolchain)
-*   Node.js (v18+) & npm
+### Installation & Run
 
-### Getting Started
+1.  **Clone the repository:**
+    ```bash
+    git clone https://github.com/Ibrohim-Bxone/Antigravity-Account-Switcher.git
+    cd Antigravity-Account-Switcher
+    ```
 
-1.  Install dependencies:
+2.  **Install dependencies:**
     ```powershell
     npm install
     ```
-2.  Start the Tauri development server:
+
+3.  **Start development server:**
     ```powershell
     npm run tauri dev
     ```
 
-To run quality checks (frontend build + Rust cargo checks and unit tests):
-```powershell
-npm run check
-```
+4.  **Build production release binary:**
+    ```powershell
+    npm run build
+    cargo build --release --bin app
+    ```
 
-Or run Rust unit tests separately:
-```powershell
-cargo test --workspace
-```
+The compiled binary will be located at `target/release/app.exe`.
 
 ---
 
-## License
+## ⚖️ Legal Disclaimer
 
-MIT © [Antigravity Account Switcher contributors](LICENSE)
+This application is provided strictly for personal workflow optimization and research purposes. Users are responsible for adhering to all relevant third-party Terms of Service.
+
+---
+
+## 📄 License
+
+Distributed under the [MIT License](LICENSE).

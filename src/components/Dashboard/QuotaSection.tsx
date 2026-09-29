@@ -22,7 +22,15 @@ export default function QuotaSection({ quota }: QuotaSectionProps) {
         <span>{t("quota_usage_title")}</span>
       </p>
       <div className="quotas-list">
-        {quota.quota_groups.map((group, gIdx) => (
+        {[...quota.quota_groups]
+          .sort((a, b) => {
+            const aIs3p = a.buckets.some((bk) => bk.bucket_id.startsWith("3p"));
+            const bIs3p = b.buckets.some((bk) => bk.bucket_id.startsWith("3p"));
+            if (aIs3p && !bIs3p) return -1;
+            if (!aIs3p && bIs3p) return 1;
+            return 0;
+          })
+          .map((group, gIdx) => (
           <div key={gIdx} className="quota-group">
             <span className="quota-group-name">{group.display_name}</span>
             <div className="quota-buckets-grid">
@@ -62,6 +70,10 @@ export default function QuotaSection({ quota }: QuotaSectionProps) {
                   name = t("quota_weekly_limit");
                 } else if (bucket.bucket_id === "gemini-5h") {
                   name = t("quota_5h_limit");
+                } else if (bucket.bucket_id === "3p-weekly") {
+                  name = t("quota_3p_weekly_limit");
+                } else if (bucket.bucket_id === "3p-5h") {
+                  name = t("quota_3p_5h_limit");
                 }
 
                 return (

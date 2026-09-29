@@ -15,6 +15,8 @@ import { showMiniWindow } from "../../bridge";
 import ActiveAccount from "./ActiveAccount";
 import EmptyState from "./EmptyState";
 import GlobalQuotaSummary from "./GlobalQuotaSummary";
+import ExternalAiAccountsCard from "./ExternalAiAccountsCard";
+import VertexAiCard from "./VertexAiCard";
 
 interface DashboardProps {
   state: AppState;
@@ -306,6 +308,13 @@ export function Dashboard({
               </div>
             </div>
           </div>
+
+          {/* Top Priority: Claude Pro & ChatGPT Limits */}
+          <ExternalAiAccountsCard />
+
+          {/* Vertex AI $300 Credit Balance */}
+          <VertexAiCard />
+
           <GlobalQuotaSummary profiles={state.profiles} />
 
           {active ? (

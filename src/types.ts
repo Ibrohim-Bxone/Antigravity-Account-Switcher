@@ -86,6 +86,47 @@ export interface AppSettings {
 
 
 
+export interface VertexAiBalance {
+  enabled: boolean;
+  project_id: string;
+  billing_account_id?: string;
+  initial_credit: number;
+  remaining_credit: number;
+  currency: string;
+  last_updated?: string;
+}
+
+export interface ExternalAccountQuota {
+  id: string;
+  provider: "claude" | "chatgpt";
+  name: string;
+  email?: string;
+  plan: string; // "Pro", "Plus", "Team"
+  window_label?: string;
+  // 5-Hour Limit
+  five_hour_percentage: number;
+  five_hour_reset?: string;
+  five_hour_target_time?: string; // e.g. "19:11" or "7:11 PM"
+  last_calculated_at?: number;
+  auto_recover?: boolean;
+  // Weekly Limit
+  weekly_percentage: number;
+  weekly_reset?: string;
+  // Cloud session credits (Cursor / Claude)
+  cloud_credits_remaining?: number;
+  cloud_credits_total?: number;
+  cloud_credits_expiry?: string;
+  context_window?: string;
+  model?: string;
+  percentage_mode?: "used" | "remaining";
+  // Legacy / fallback fields
+  remaining_percentage?: number;
+  remaining_messages?: number;
+  total_messages?: number;
+  reset_time?: string;
+  status: "active" | "low" | "exhausted" | "paused";
+}
+
 export interface AppState {
   profiles: ProfileSummary[];
   active_profile_id: string | null;
@@ -100,6 +141,8 @@ export interface AppState {
   app_version?: string | null;
   antigravity_version?: string | null;
   last_error?: string | null;
+  vertex_ai?: VertexAiBalance;
+  external_accounts?: ExternalAccountQuota[];
 }
 
 

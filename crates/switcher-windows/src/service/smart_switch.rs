@@ -1,6 +1,8 @@
 /**
- * Smart Switch automation.
+ * Smart Switch automation with Process Guardian & Token Health Shield.
  * Periodically checks Gemini usage levels and automatically swaps active accounts when limits are exhausted.
+ * CRITICAL SAFETY: Never interrupts active tasks, compiler jobs, or subagents.
+ * Never switches to accounts requiring re-verification.
  * Main exports: impl SwitcherService smart switch methods
  */
 use rusqlite::Connection;
@@ -19,32 +21,93 @@ fn get_bucket_remaining_fraction(quota: &ProfileQuotaView, bucket_id: &str) -> O
 }
 
 impl SwitcherService {
+    /**
+     * Multi-layered activity check (Process Guardian):
+     * 1. Detects active sub-processes (PowerShell, Cargo, Git, Node, Python, agy) running under Antigravity.
+     * 2. Detects real-time transcript/brain file write activity in ~/.gemini/antigravity/brain.
+     * 3. Queries SQLite state database item table if available.
+     * Returns true if ANY background work is active, blocking any switch operation.
+     */
     pub fn is_agent_working(&self) -> bool {
+        // 1. Process Tree Check: Check if Antigravity or its child processes are running task workers
+        if let Ok(process_mgr) = self.process_manager() {
+            if let Ok(procs) = process_mgr.enumerate() {
+                for p in &procs {
+                    let name = p.name.to_lowercase();
+                    // Task runner / build / worker process names that mean work is in progress
+                    if matches!(
+                        name.as_str(),
+                        "powershell.exe"
+                            | "pwsh.exe"
+                            | "cmd.exe"
+                            | "node.exe"
+                            | "cargo.exe"
+                            | "rustc.exe"
+                            | "git.exe"
+                            | "python.exe"
+                            | "python3.exe"
+                            | "agy.exe"
+                            | "docker.exe"
+                    ) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2. Brain Activity Check: If transcript or session changed within last 120 seconds
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            let brain_dir = std::path::Path::new(&user_profile)
+                .join(".gemini")
+                .join("antigravity")
+                .join("brain");
+            if brain_dir.is_dir() {
+                let now = std::time::SystemTime::now();
+                if let Ok(entries) = std::fs::read_dir(&brain_dir) {
+                    for entry in entries.flatten() {
+                        if let Ok(meta) = entry.metadata() {
+                            if let Ok(modified) = meta.modified() {
+                                if let Ok(elapsed) = now.duration_since(modified) {
+                                    if elapsed.as_secs() < 120 {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. SQLite ItemTable check
         let path = &self.paths.state_db;
-        let conn = match Connection::open(path) {
-            Ok(c) => c,
-            Err(_) => return false,
-        };
-        let query = "SELECT value FROM ItemTable WHERE key = 'antigravity.agent.working'";
-        let working_str: String = match conn.query_row(query, [], |row| row.get(0)) {
-            Ok(val) => val,
-            Err(_) => return false,
-        };
-        working_str.trim().to_lowercase() == "true"
+        if let Ok(conn) = Connection::open(path) {
+            let query = "SELECT value FROM ItemTable WHERE key = 'antigravity.agent.working'";
+            if let Ok(working_str) = conn.query_row(query, [], |row| row.get::<_, String>(0)) {
+                if working_str.trim().to_lowercase() == "true" {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     pub async fn check_and_perform_smart_switch(&self) -> Result<()> {
         if !self.config.read().smart_switch_enabled {
             return Ok(());
         }
+
+        // PROCESS GUARDIAN: If any task, compiler, or subagent is active, defer switch!
         if self.is_agent_working() {
-            self.logger.info(
+            self.logger.warn(
                 None,
                 "smart_switch",
-                "Automated switch skipped: Agent is actively working",
+                "Automated switch DEFERRED: Background processes or subagents are actively working. Protecting current tasks.",
             );
             return Ok(());
         }
+
         if self.journal().exists() {
             return Ok(());
         }
@@ -71,8 +134,14 @@ impl SwitcherService {
         let rem_5h = get_bucket_remaining_fraction(active_quota, "gemini-5h").unwrap_or(1.0);
         let rem_weekly =
             get_bucket_remaining_fraction(active_quota, "gemini-weekly").unwrap_or(1.0);
+        let rem_3p_5h = get_bucket_remaining_fraction(active_quota, "3p-5h").unwrap_or(1.0);
+        let rem_3p_weekly =
+            get_bucket_remaining_fraction(active_quota, "3p-weekly").unwrap_or(1.0);
 
-        if rem_5h >= 0.10 && rem_weekly >= 0.05 {
+        let gemini_exhausted = rem_5h < 0.10 || rem_weekly < 0.05;
+        let p3_exhausted = rem_3p_5h < 0.10 || rem_3p_weekly < 0.05;
+
+        if !gemini_exhausted && !p3_exhausted {
             return Ok(());
         }
 
@@ -80,22 +149,34 @@ impl SwitcherService {
             None,
             "smart_switch",
             format!(
-                "Active profile limits exhausted: 5h={:.1}%, weekly={:.1}%. Finding alternative profile...",
+                "Active profile limits exhausted (Gemini: 5h={:.1}%, weekly={:.1}%; Claude/Codex: 5h={:.1}%, weekly={:.1}%). Finding verified alternative profile...",
                 rem_5h * 100.0,
-                rem_weekly * 100.0
+                rem_weekly * 100.0,
+                rem_3p_5h * 100.0,
+                rem_3p_weekly * 100.0,
             ),
         );
 
         let mut candidate: Option<(Uuid, f64, f64)> = None;
+        let mut fallback_candidate: Option<Uuid> = None;
 
         for profile in &profiles {
+            // Strictly skip active profile and profiles requiring re-authentication
             if profile.is_active || profile.token_status != TokenStatus::Valid {
                 continue;
             }
+
+            // Only consider profiles that have verified live quota available
             if let Some(ref q) = profile.quota {
                 let cand_5h = get_bucket_remaining_fraction(q, "gemini-5h").unwrap_or(0.0);
                 let cand_weekly = get_bucket_remaining_fraction(q, "gemini-weekly").unwrap_or(0.0);
-                if cand_5h >= 0.15 && cand_weekly >= 0.08 {
+                let cand_3p_5h = get_bucket_remaining_fraction(q, "3p-5h").unwrap_or(0.0);
+                let cand_3p_weekly = get_bucket_remaining_fraction(q, "3p-weekly").unwrap_or(0.0);
+
+                let is_gemini_ok = cand_5h >= 0.15 && cand_weekly >= 0.08;
+                let is_3p_ok = cand_3p_5h >= 0.15 && cand_3p_weekly >= 0.08;
+
+                if is_gemini_ok && is_3p_ok {
                     if let Some((_, best_5h, _)) = candidate {
                         if cand_5h > best_5h {
                             candidate = Some((profile.metadata.profile_id, cand_5h, cand_weekly));
@@ -103,19 +184,31 @@ impl SwitcherService {
                     } else {
                         candidate = Some((profile.metadata.profile_id, cand_5h, cand_weekly));
                     }
+                } else if (cand_5h > rem_5h || cand_3p_5h > rem_3p_5h) && cand_5h > 0.10 {
+                    if fallback_candidate.is_none() {
+                        fallback_candidate = Some(profile.metadata.profile_id);
+                    }
                 }
             }
         }
 
-        if let Some((target_id, cand_5h, _)) = candidate {
+        let target_id = candidate.map(|(id, _, _)| id).or(fallback_candidate);
+
+        if let Some(target_id) = target_id {
+            // Final check right before switch: ensure no tasks started in the meantime
+            if self.is_agent_working() {
+                self.logger.warn(
+                    None,
+                    "smart_switch",
+                    "Switch aborted at final step: Tasks started right before switch. Waiting.",
+                );
+                return Ok(());
+            }
+
             self.logger.warn(
                 None,
                 "smart_switch",
-                format!(
-                    "Triggering smart switch to profile {} (available 5h={:.1}%)",
-                    target_id,
-                    cand_5h * 100.0
-                ),
+                format!("Triggering safe verified smart switch to profile {}", target_id),
             );
             match self.request_switch(target_id, None) {
                 Ok(req) => {
@@ -139,7 +232,7 @@ impl SwitcherService {
             self.logger.warn(
                 None,
                 "smart_switch",
-                "No alternative profiles with sufficient quotas found.",
+                "No verified alternative profiles with sufficient quotas and valid tokens found.",
             );
         }
 
@@ -156,14 +249,11 @@ impl SwitcherService {
         let profiles = self.list_profiles_live(Some(active_profile_id)).await?;
 
         let mut candidate: Option<(Uuid, f64, f64)> = None;
-        let mut fallback_candidate: Option<Uuid> = None;
+        let fallback_candidate: Option<Uuid> = None;
 
         for profile in &profiles {
             if profile.is_active || profile.token_status != TokenStatus::Valid {
                 continue;
-            }
-            if fallback_candidate.is_none() {
-                fallback_candidate = Some(profile.metadata.profile_id);
             }
             if let Some(ref q) = profile.quota {
                 let cand_5h = get_bucket_remaining_fraction(q, "gemini-5h").unwrap_or(0.0);

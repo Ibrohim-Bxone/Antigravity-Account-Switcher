@@ -86,21 +86,7 @@ pub fn run() {
                 }
             });
 
-            // Monitor WebView2 subprocesses to exit cleanly if they are terminated or crashed
-            tauri::async_runtime::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                let mut has_seen_webview = false;
-                loop {
-                    interval.tick().await;
-                    let active = switcher_windows::has_active_webview_processes();
-                    if active {
-                        has_seen_webview = true;
-                    } else if has_seen_webview {
-                        eprintln!("WebView2 child processes terminated. Exiting application.");
-                        std::process::exit(0);
-                    }
-                }
-            });
+
 
             app.manage(service.clone());
 
@@ -144,6 +130,15 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            if let Some(main_win) = app.get_webview_window("main") {
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(hwnd) = main_win.hwnd() {
+                        switcher_windows::enable_window_resize(hwnd.0 as isize);
+                    }
+                }
+            }
 
             Ok(())
         })
@@ -189,6 +184,12 @@ pub fn run() {
             commands::show_mini_window,
             commands::hide_mini_window,
             commands::resize_mini_window,
+            commands::toggle_maximize,
+            commands::is_window_maximized,
+            commands::minimize_window,
+            commands::close_window,
+            commands::enter_mini_mode,
+            commands::exit_mini_mode,
             commands::wipe_app_data,
             commands::uninstall_app,
             commands::force_smart_switch,
@@ -199,6 +200,14 @@ pub fn run() {
             commands::open_browser_url,
             commands::send_email_report
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                let service = app_handle.state::<std::sync::Arc<SwitcherService>>();
+                if service.minimize_to_tray() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

@@ -17,20 +17,24 @@ function MiniQuotaBadges({ quota }: { quota?: ProfileSummary["quota"] }) {
   
   let weeklyBucket = null;
   let fiveHourBucket = null;
+  let weekly3pBucket = null;
+  let fiveHour3pBucket = null;
+
   for (const group of quota.quota_groups) {
     const weekly = group.buckets.find(b => b.bucket_id === "gemini-weekly");
-    if (weekly) {
-      weeklyBucket = weekly;
-    }
+    if (weekly) weeklyBucket = weekly;
     const fiveHour = group.buckets.find(b => b.bucket_id === "gemini-5h");
-    if (fiveHour) {
-      fiveHourBucket = fiveHour;
-    }
+    if (fiveHour) fiveHourBucket = fiveHour;
+
+    const w3p = group.buckets.find(b => b.bucket_id === "3p-weekly");
+    if (w3p) weekly3pBucket = w3p;
+    const f3p = group.buckets.find(b => b.bucket_id === "3p-5h");
+    if (f3p) fiveHour3pBucket = f3p;
   }
   
-  if (!weeklyBucket && !fiveHourBucket) return null;
+  if (!weeklyBucket && !fiveHourBucket && !weekly3pBucket && !fiveHour3pBucket) return null;
   
-  const renderBadge = (bucket: any, labelKey: "quota_weekly_label" | "quota_5h_label") => {
+  const renderBadge = (bucket: any, labelText: string) => {
     const pct = Math.round(bucket.remaining_fraction * 100);
     const isLow = pct < 20;
     const isMedium = pct >= 20 && pct < 50;
@@ -42,16 +46,18 @@ function MiniQuotaBadges({ quota }: { quota?: ProfileSummary["quota"] }) {
         className={`mini-quota-badge mini-quota-badge--${tone}`} 
         title={`${bucket.display_name}: ${pct}% (${bucket.description || ""})`}
       >
-        <span className="mini-quota-badge__label">{t(labelKey)}</span>
+        <span className="mini-quota-badge__label">{labelText}</span>
         <span>{pct}%</span>
       </div>
     );
   };
   
   return (
-    <div className="account-card__quota-badges">
-      {fiveHourBucket && renderBadge(fiveHourBucket, "quota_5h_label")}
-      {weeklyBucket && renderBadge(weeklyBucket, "quota_weekly_label")}
+    <div className="account-card__quota-badges" style={{ flexWrap: "wrap", gap: "5px" }}>
+      {fiveHourBucket && renderBadge(fiveHourBucket, "G 5h")}
+      {weeklyBucket && renderBadge(weeklyBucket, "G 7d")}
+      {fiveHour3pBucket && renderBadge(fiveHour3pBucket, "Claude 5h")}
+      {weekly3pBucket && renderBadge(weekly3pBucket, "Claude 7d")}
     </div>
   );
 }
