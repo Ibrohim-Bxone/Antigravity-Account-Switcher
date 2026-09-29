@@ -202,12 +202,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = event {
-                let service = app_handle.state::<std::sync::Arc<SwitcherService>>();
-                if service.minimize_to_tray() {
-                    api.prevent_exit();
-                }
-            }
-        });
+        .run(|_app_handle, _event| {});
 }

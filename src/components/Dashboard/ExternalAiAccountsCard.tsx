@@ -86,6 +86,7 @@ function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): {
 
   const isClaude = acc.provider === "claude";
   const isUsedMode = acc.percentage_mode === "used" || isClaude;
+  const autoRecover = acc.auto_recover !== false;
 
   // If specific time like "19:11" or "7:11 PM"
   const rawTarget = acc.five_hour_target_time || acc.five_hour_reset || "";
@@ -104,13 +105,14 @@ function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): {
 
     const diffMs = targetDate.getTime() - now.getTime();
 
-    // If reset time has passed today (within 5 hours window), limit is 100% recovered
+    // If reset time has passed today (within 5 hours window)
     if (diffMs <= 0) {
+      const displayPct = autoRecover ? (isUsedMode ? 0 : 100) : (acc.five_hour_percentage ?? 100);
       return {
-        fiveHourDisplayPct: isUsedMode ? 0 : 100,
-        fiveHourStatusText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""} • 100% Ready (Tiklandi ✅)`.trim(),
+        fiveHourDisplayPct: displayPct,
+        fiveHourStatusText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""} • ${autoRecover ? "100% Ready (Tiklandi ✅)" : "Tiklanish vaqti o'tdi"}`.trim(),
         tooltipText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""}`.trim(),
-        isFullyReset: true,
+        isFullyReset: autoRecover,
       };
     } else {
       // Still counting down to reset time
@@ -133,23 +135,29 @@ function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): {
   // If relative format "Resets in X hr Y min"
   const relMatch = rawTarget.match(/in\s+(\d+)\s*hr\s*(\d*)\s*min/i) || (acc.five_hour_reset || "").match(/in\s+(\d+)\s*hr\s*(\d*)\s*min/i);
   if (relMatch) {
-    const hours = parseInt(relMatch[1], 10) || 0;
-    const mins = parseInt(relMatch[2], 10) || 0;
-    const totalMinutesLeft = hours * 60 + mins;
+    const totalDurationMinutes = (parseInt(relMatch[1], 10) || 0) * 60 + (parseInt(relMatch[2], 10) || 0);
+    const createdAt = acc.last_calculated_at || now.getTime();
+    const elapsedMinutes = Math.floor((now.getTime() - createdAt) / (1000 * 60));
+    const remainingMinutes = Math.max(0, totalDurationMinutes - elapsedMinutes);
 
-    if (totalMinutesLeft <= 0) {
+    if (remainingMinutes <= 0) {
+      const displayPct = autoRecover ? (isUsedMode ? 0 : 100) : (acc.five_hour_percentage ?? 100);
       return {
-        fiveHourDisplayPct: isUsedMode ? 0 : 100,
-        fiveHourStatusText: "Limit to'liq tiklandi (100% Ready ✅)",
+        fiveHourDisplayPct: displayPct,
+        fiveHourStatusText: autoRecover ? "Limit to'liq tiklandi (100% Ready ✅)" : "Tiklanish muddati o'tdi",
         tooltipText: "Limit tiklangan",
-        isFullyReset: true,
+        isFullyReset: autoRecover,
       };
     }
 
+    const remH = Math.floor(remainingMinutes / 60);
+    const remM = remainingMinutes % 60;
+    const remStr = remH > 0 ? `${remH} hr ${remM} min` : `${remM} min`;
+
     return {
       fiveHourDisplayPct: acc.five_hour_percentage ?? (isUsedMode ? 23 : 100),
-      fiveHourStatusText: acc.five_hour_reset || `Resets in ${hours} hr ${mins} min`,
-      tooltipText: acc.five_hour_reset || `Resets in ${hours} hr ${mins} min`,
+      fiveHourStatusText: `Resets in ${remStr}`,
+      tooltipText: `Resets in ${remStr}`,
       isFullyReset: false,
     };
   }
@@ -169,7 +177,7 @@ export default function ExternalAiAccountsCard() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0].five_hour_percentage === "number") {
+        if (Array.isArray(parsed)) {
           return parsed;
         }
       }
@@ -217,12 +225,12 @@ export default function ExternalAiAccountsCard() {
     const form = e.currentTarget;
     const formData = new FormData(form);
     const id = editingAccount ? editingAccount.id : `ext-${Date.now()}`;
-    const name = (formData.get("name") as string) || "AI Account";
-    const provider = (formData.get("provider") as "claude" | "chatgpt") || "claude";
-    const plan = (formData.get("plan") as string) || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
-    const model = (formData.get("model") as string) || "";
-    const email = (formData.get("email") as string) || (provider === "claude" ? "user@anthropic.pro" : "user@openai.plus");
-    const context_window = (formData.get("context_window") as string) || "";
+    const name = (formData.get("name") as string) || editingAccount?.name || "AI Account";
+    const provider = (formData.get("provider") as "claude" | "chatgpt") || editingAccount?.provider || "claude";
+    const plan = (formData.get("plan") as string) || editingAccount?.plan || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
+    const model = (formData.get("model") as string) || editingAccount?.model || "";
+    const email = (formData.get("email") as string) || editingAccount?.email || (provider === "claude" ? "user@anthropic.pro" : "user@openai.plus");
+    const context_window = (formData.get("context_window") as string) || editingAccount?.context_window || "";
 
     const fiveHourPct = Math.min(100, Math.max(0, parseInt(formData.get("five_hour_percentage") as string) || 0));
     const fiveHourReset = (formData.get("five_hour_reset") as string) || "Resets at 7:11 PM";
@@ -268,6 +276,7 @@ export default function ExternalAiAccountsCard() {
       remaining_percentage: fiveHourPct,
       reset_time: fiveHourReset,
       auto_recover: autoRecover,
+      last_calculated_at: Date.now(),
       status,
     };
 

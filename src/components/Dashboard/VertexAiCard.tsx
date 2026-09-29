@@ -50,8 +50,10 @@ export default function VertexAiCard() {
     e.preventDefault();
     const form = e.currentTarget;
     const formData = new FormData(form);
-    const initial = parseFloat(formData.get("initial") as string) || 300.0;
-    const remaining = parseFloat(formData.get("remaining") as string) || 300.0;
+    const initialRaw = parseFloat(formData.get("initial") as string);
+    const initial = isNaN(initialRaw) ? 300.0 : initialRaw;
+    const remainingRaw = parseFloat(formData.get("remaining") as string);
+    const remaining = isNaN(remainingRaw) ? 300.0 : remainingRaw;
     const projectId = (formData.get("project_id") as string) || data.project_id;
     const billingId = (formData.get("billing_id") as string) || data.billing_account_id;
 
