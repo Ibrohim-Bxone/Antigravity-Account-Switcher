@@ -352,7 +352,7 @@ pub async fn send_email_report(
 
     let last_sub_mutex = get_last_submission();
     {
-        let mut guard = last_sub_mutex.lock().unwrap();
+        let mut guard = last_sub_mutex.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(last_time) = *guard {
             let elapsed = last_time.elapsed();
             if elapsed < Duration::from_secs(60) {

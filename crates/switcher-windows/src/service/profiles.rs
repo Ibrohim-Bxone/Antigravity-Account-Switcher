@@ -37,6 +37,15 @@ fn quota_fetching() -> &'static StdMutex<HashSet<String>> {
     FETCHING.get_or_init(|| StdMutex::new(HashSet::new()))
 }
 
+fn lock_quota_cache() -> std::sync::MutexGuard<'static, HashMap<String, (ProfileQuotaView, std::time::Instant)>> {
+    global_quota_cache().lock().unwrap_or_else(|p| p.into_inner())
+}
+
+fn lock_quota_fetching() -> std::sync::MutexGuard<'static, HashSet<String>> {
+    quota_fetching().lock().unwrap_or_else(|p| p.into_inner())
+}
+
+
 impl SwitcherService {
     pub(crate) fn ensure_installation_path_resolved(&self) -> Option<PathBuf> {
         let mut config = self.config.write();
@@ -706,7 +715,7 @@ impl SwitcherService {
                 if let Some(ref bytes) = credential_bytes {
                     if let Some(ref refresh_token) = parse_refresh_token(bytes) {
                         let (has_valid_cache, cached_val) = {
-                            let cache = global_quota_cache().lock().unwrap();
+                            let cache = lock_quota_cache();
                             let now = std::time::Instant::now();
                             // Cache quota for 1 minute (60 seconds)
                             let cache_duration = std::time::Duration::from_secs(60);
@@ -724,7 +733,7 @@ impl SwitcherService {
 
                         if !has_valid_cache {
                             let should_fetch = {
-                                let mut fetching = quota_fetching().lock().unwrap();
+                                let mut fetching = lock_quota_fetching();
                                 if fetching.contains(email) {
                                     false
                                 } else {
@@ -743,7 +752,7 @@ impl SwitcherService {
                                         .await
                                     {
                                         Ok(live_quota) => {
-                                            let mut cache = global_quota_cache().lock().unwrap();
+                                            let mut cache = lock_quota_cache();
                                             cache.insert(
                                                 email_clone.clone(),
                                                 (live_quota, std::time::Instant::now()),
@@ -760,7 +769,7 @@ impl SwitcherService {
                                             );
                                         }
                                     }
-                                    quota_fetching().lock().unwrap().remove(&email_clone);
+                                    lock_quota_fetching().remove(&email_clone);
                                 });
                             }
                         }
@@ -869,7 +878,7 @@ impl SwitcherService {
         }
 
         if !fetched_quotas.is_empty() {
-            let mut cache = global_quota_cache().lock().unwrap();
+            let mut cache = lock_quota_cache();
             let now = std::time::Instant::now();
             for (email, quota) in fetched_quotas {
                 cache.insert(email, (quota, now));
@@ -1091,7 +1100,7 @@ impl SwitcherService {
                     crate::quota::QuotaDecryptor::fetch_live_quota(&refresh_token_clone).await;
                 match result {
                     Ok(live_quota) => {
-                        let mut cache = global_quota_cache().lock().unwrap();
+                        let mut cache = lock_quota_cache();
                         cache.insert(email_clone, (live_quota, std::time::Instant::now()));
                         logger_clone.info(
                             None,

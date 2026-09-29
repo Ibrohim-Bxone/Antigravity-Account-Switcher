@@ -56,7 +56,7 @@ impl SwitcherService {
             }
         }
 
-        // 2. Brain Activity Check: Recursively inspect ~/.gemini/antigravity/brain files
+        // 2. Fast Brain Activity Check: Check active session transcript files without 25,000 recursive walks
         if let Some(user_profile) = std::env::var_os("USERPROFILE") {
             let brain_dir = std::path::Path::new(&user_profile)
                 .join(".gemini")
@@ -64,17 +64,33 @@ impl SwitcherService {
                 .join("brain");
             if brain_dir.is_dir() {
                 let now = std::time::SystemTime::now();
-                for entry in walkdir::WalkDir::new(&brain_dir)
-                    .max_depth(3)
-                    .into_iter()
-                    .flatten()
-                {
-                    if entry.file_type().is_file() {
-                        if let Ok(meta) = entry.metadata() {
-                            if let Ok(modified) = meta.modified() {
-                                if let Ok(elapsed) = now.duration_since(modified) {
-                                    if elapsed.as_secs() < 120 {
-                                        return true;
+                if let Ok(entries) = std::fs::read_dir(&brain_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            // Check top-level folder modified time
+                            if let Ok(meta) = entry.metadata() {
+                                if let Ok(modified) = meta.modified() {
+                                    if let Ok(elapsed) = now.duration_since(modified) {
+                                        if elapsed.as_secs() < 120 {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                            // Also check transcript.jsonl inside active session
+                            let transcript_path = path
+                                .join(".system_generated")
+                                .join("logs")
+                                .join("transcript.jsonl");
+                            if transcript_path.is_file() {
+                                if let Ok(meta) = std::fs::metadata(&transcript_path) {
+                                    if let Ok(modified) = meta.modified() {
+                                        if let Ok(elapsed) = now.duration_since(modified) {
+                                            if elapsed.as_secs() < 120 {
+                                                return true;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -84,13 +100,19 @@ impl SwitcherService {
             }
         }
 
-        // 3. SQLite ItemTable check
+        // 3. SQLite ItemTable check (read-only with busy timeout to avoid lock conflicts)
         let path = &self.paths.state_db;
-        if let Ok(conn) = Connection::open(path) {
-            let query = "SELECT value FROM ItemTable WHERE key = 'antigravity.agent.working'";
-            if let Ok(working_str) = conn.query_row(query, [], |row| row.get::<_, String>(0)) {
-                if working_str.trim().to_lowercase() == "true" {
-                    return true;
+        if path.is_file() {
+            if let Ok(conn) = Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
+            ) {
+                let _ = conn.busy_timeout(std::time::Duration::from_millis(300));
+                let query = "SELECT value FROM ItemTable WHERE key = 'antigravity.agent.working'";
+                if let Ok(working_str) = conn.query_row(query, [], |row| row.get::<_, String>(0)) {
+                    if working_str.trim().to_lowercase() == "true" {
+                        return true;
+                    }
                 }
             }
         }

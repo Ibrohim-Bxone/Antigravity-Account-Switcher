@@ -4,7 +4,12 @@ use std::{fs, io::Write, path::Path};
 
 pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
     let bytes = fs::read(path).map_err(|source| SwitcherError::io(path, source))?;
-    serde_json::from_slice(&bytes).map_err(|source| SwitcherError::Json {
+    let slice = if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        &bytes[3..]
+    } else {
+        &bytes[..]
+    };
+    serde_json::from_slice(slice).map_err(|source| SwitcherError::Json {
         path: path.to_path_buf(),
         source,
     })
