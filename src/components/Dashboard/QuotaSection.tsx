@@ -40,8 +40,12 @@ export default function QuotaSection({ quota }: QuotaSectionProps) {
                 const isMedium = pct >= 20 && pct < 50;
                 const tone = isLow ? "danger" : isMedium ? "warning" : "success";
 
-                // Format reset time
+                // Format reset time and fresh indicator
                 let resetLabel = "";
+                let freshExactTime = "";
+                let remainingTime = "";
+                const isExhausted = pct === 0;
+
                 if (bucket.reset_time && pct < 100) {
                   try {
                     const resetDate = new Date(bucket.reset_time);
@@ -50,18 +54,16 @@ export default function QuotaSection({ quota }: QuotaSectionProps) {
                     if (diffMs > 0) {
                       const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
                       const diffMinutes = Math.round((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-                      if (diffHours > 0) {
-                        resetLabel = t("quota_refresh_in", { time: `${diffHours}h ${diffMinutes}m` });
-                      } else {
-                        resetLabel = t("quota_refresh_in", { time: `${diffMinutes}m` });
-                      }
+                      remainingTime = diffHours > 0 ? `${diffHours}h ${diffMinutes}m` : `${diffMinutes}m`;
+                      freshExactTime = resetDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                      resetLabel = `Fresh: ${freshExactTime} (${remainingTime} qoldi)`;
                     } else {
-                      resetLabel = t("quota_full");
+                      resetLabel = "100% Ready (Tiklandi ✅)";
                     }
                   } catch (e) {
                     // Ignore parsing error
                   }
-                } else {
+                } else if (pct === 100) {
                   resetLabel = t("quota_full");
                 }
 
@@ -81,7 +83,9 @@ export default function QuotaSection({ quota }: QuotaSectionProps) {
                     <div className="quota-bucket__header">
                       <span className="quota-bucket__name">{name}</span>
                       <span className={`quota-bucket__pct quota-bucket__pct--${tone}`}>
-                        {t("quota_remaining", { pct: String(pct) })}
+                        {isExhausted
+                          ? "0% (Tugagan ⛔)"
+                          : t("quota_remaining", { pct: String(pct) })}
                       </span>
                     </div>
                     <div className="quota-progress-bar">
@@ -91,7 +95,25 @@ export default function QuotaSection({ quota }: QuotaSectionProps) {
                       />
                     </div>
                     {resetLabel && pct < 100 ? (
-                      <span className="quota-bucket__reset">{resetLabel}</span>
+                      <span
+                        className="quota-bucket__reset"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          marginTop: "4px",
+                          fontSize: "11px",
+                          fontWeight: isExhausted ? 700 : 500,
+                          color: isExhausted ? "#f87171" : "#38bdf8",
+                        }}
+                      >
+                        <Icon name="refresh" size={11} />
+                        <span>
+                          {isExhausted
+                            ? `Tugagan • Fresh: ${freshExactTime || "Tez orada"} (${remainingTime || "kutilmoqda"})`
+                            : resetLabel}
+                        </span>
+                      </span>
                     ) : null}
                   </div>
                 );

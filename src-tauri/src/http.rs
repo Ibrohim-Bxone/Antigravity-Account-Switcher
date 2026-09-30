@@ -43,15 +43,18 @@ fn handle_client(
         }
     }
 
-    let expected_auth = format!("Bearer {}", api_secret);
-    if auth_header != Some(expected_auth.as_str()) {
-        send_response(
-            &mut stream,
-            401,
-            "Unauthorized",
-            r#"{"error":"Unauthorized"}"#,
-        )?;
-        return Ok(());
+    // /api/v1/app/show does not require auth so single-instance reactivation works instantly
+    if path != "/api/v1/app/show" {
+        let expected_auth = format!("Bearer {}", api_secret);
+        if auth_header != Some(expected_auth.as_str()) {
+            send_response(
+                &mut stream,
+                401,
+                "Unauthorized",
+                r#"{"error":"Unauthorized"}"#,
+            )?;
+            return Ok(());
+        }
     }
 
     if method == "GET" && path == "/api/v1/status" {
@@ -93,6 +96,7 @@ fn handle_client(
     } else if method == "POST" && path == "/api/v1/app/show" {
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.show();
+            let _ = window.unminimize();
             let _ = window.set_focus();
         }
         send_response(&mut stream, 200, "OK", r#"{"success":true}"#)?;

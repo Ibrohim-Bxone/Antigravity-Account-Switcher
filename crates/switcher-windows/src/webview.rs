@@ -279,7 +279,9 @@ pub async fn check_and_install_webview2() -> Result<(), String> {
 pub fn check_single_instance() {
     use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
     use windows_sys::Win32::System::Threading::CreateMutexW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    use std::io::Write;
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
 
     let mutex_name: Vec<u16> = "Local\\AntigravityAccountSwitcherUniqueMutexLockName\0"
         .encode_utf16()
@@ -290,6 +292,17 @@ pub fn check_single_instance() {
         if handle != ptr::null_mut() {
             let err = GetLastError();
             if err == ERROR_ALREADY_EXISTS {
+                // 1. Try to wake the running instance via local HTTP server
+                if let Ok(addr) = "127.0.0.1:48731".parse::<SocketAddr>() {
+                    if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+                        let req = "POST /api/v1/app/show HTTP/1.1\r\nHost: 127.0.0.1:48731\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+                        let _ = stream.write_all(req.as_bytes());
+                        let _ = stream.flush();
+                        std::process::exit(0);
+                    }
+                }
+
+                // 2. Fallback to Win32 FindWindow
                 let title_wide = encode_wide("Antigravity Account Switcher");
                 let hwnd = windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
                     ptr::null(),
@@ -301,8 +314,9 @@ pub fn check_single_instance() {
                         windows_sys::Win32::UI::WindowsAndMessaging::SW_RESTORE,
                     );
                     windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow(hwnd);
+                    std::process::exit(0);
                 }
-                std::process::exit(0);
+                // If window was not found and HTTP didn't respond, allow new process to launch
             }
         }
     }

@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
 import { Icon } from "../Icons";
 import type { ExternalAccountQuota } from "../../types";
 
-const STORAGE_KEY = "switcher_external_ai_accounts_v6";
+const STORAGE_KEY = "switcher_external_ai_accounts_v7";
 
 export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [
   {
@@ -21,16 +21,17 @@ export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [
     plan: "Claude Pro",
     model: "Opus 5.5 High",
     percentage_mode: "used",
-    context_window: "180.5k / 1M (18%)",
-    five_hour_percentage: 23,
-    five_hour_reset: "Resets in 4 hr 17 min",
-    five_hour_target_time: "in 4 hr 17 min",
-    weekly_percentage: 3,
+    context_window: "172k / 1M (17%)",
+    five_hour_percentage: 19,
+    five_hour_reset: "Resets in 57 min",
+    five_hour_target_time: "in 57 min",
+    weekly_percentage: 0,
     weekly_reset: "Resets Tue 10:00 AM",
     cloud_credits_remaining: 98,
     cloud_credits_total: 100,
     cloud_credits_expiry: "Expires 12:59 PM GMT+5, Nov 5",
     auto_recover: true,
+    last_calculated_at: Date.now(),
     status: "active",
   },
   {
@@ -41,13 +42,14 @@ export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [
     plan: "ChatGPT Plus",
     model: "GPT-4o / Codex",
     percentage_mode: "remaining",
-    five_hour_percentage: 100,
+    five_hour_percentage: 0,
     five_hour_reset: "Resets at 7:11 PM",
     five_hour_target_time: "19:11",
     weekly_percentage: 75,
     weekly_reset: "75% left • Active cycle",
     auto_recover: true,
-    status: "active",
+    last_calculated_at: Date.now(),
+    status: "exhausted",
   },
   {
     id: "claude-pro-backup",
@@ -66,21 +68,31 @@ export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [
   },
 ];
 
-/**
- * Calculates real-time status and countdown for 5-hour rolling limits.
- */
-function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): {
+export interface DynamicQuotaResult {
   fiveHourDisplayPct: number;
   fiveHourStatusText: string;
   tooltipText: string;
   isFullyReset: boolean;
-} {
+  isExhausted: boolean;
+  freshTimeStr: string | null;
+  remainingTimeStr: string | null;
+  recoveryProgressPct: number;
+}
+
+/**
+ * Calculates real-time status, fresh time, and live countdown for rolling limits.
+ */
+function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): DynamicQuotaResult {
   if (acc.status === "paused") {
     return {
       fiveHourDisplayPct: 0,
       fiveHourStatusText: acc.five_hour_reset || "Pauzada",
       tooltipText: "Obuna to'xtatilgan",
       isFullyReset: false,
+      isExhausted: false,
+      freshTimeStr: null,
+      remainingTimeStr: null,
+      recoveryProgressPct: 0,
     };
   }
 
@@ -88,10 +100,13 @@ function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): {
   const isUsedMode = acc.percentage_mode === "used" || isClaude;
   const autoRecover = acc.auto_recover !== false;
 
-  // If specific time like "19:11" or "7:11 PM"
-  const rawTarget = acc.five_hour_target_time || acc.five_hour_reset || "";
-  const timeMatch = rawTarget.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  const basePct = acc.five_hour_percentage ?? (isUsedMode ? 19 : 0);
+  const isExhausted = isUsedMode ? basePct >= 100 : basePct <= 0;
 
+  const rawTarget = (acc.five_hour_target_time || acc.five_hour_reset || "").trim();
+
+  // 1. SPECIFIC CLOCK TIME: e.g. "19:11" or "7:11 PM"
+  const timeMatch = rawTarget.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
   if (timeMatch) {
     let hours = parseInt(timeMatch[1], 10);
     const minutes = parseInt(timeMatch[2], 10);
@@ -103,71 +118,139 @@ function calculateDynamicQuota(acc: ExternalAccountQuota, now: Date): {
     const targetDate = new Date(now);
     targetDate.setHours(hours, minutes, 0, 0);
 
-    const diffMs = targetDate.getTime() - now.getTime();
+    let diffMs = targetDate.getTime() - now.getTime();
 
-    // If reset time has passed today (within 5 hours window)
+    // If target time has already passed today:
     if (diffMs <= 0) {
-      const displayPct = autoRecover ? (isUsedMode ? 0 : 100) : (acc.five_hour_percentage ?? 100);
-      return {
-        fiveHourDisplayPct: displayPct,
-        fiveHourStatusText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""} • ${autoRecover ? "100% Ready (Tiklandi ✅)" : "Tiklanish vaqti o'tdi"}`.trim(),
-        tooltipText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""}`.trim(),
-        isFullyReset: autoRecover,
-      };
-    } else {
-      // Still counting down to reset time
-      const diffMins = Math.floor(diffMs / (1000 * 60));
-      const remHours = Math.floor(diffMins / 60);
-      const remMins = diffMins % 60;
-      const remStr = remHours > 0 ? `${remHours} hr ${remMins} min` : `${remMins} min`;
-
-      const basePct = acc.five_hour_percentage ?? (isUsedMode ? 23 : 100);
-
-      return {
-        fiveHourDisplayPct: basePct,
-        fiveHourStatusText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""} (qoldi: ${remStr})`.trim(),
-        tooltipText: `Resets at ${timeMatch[1]}:${timeMatch[2]} ${ampm || ""}`.trim(),
-        isFullyReset: false,
-      };
-    }
-  }
-
-  // If relative format "Resets in X hr Y min"
-  const relMatch = rawTarget.match(/in\s+(\d+)\s*hr\s*(\d*)\s*min/i) || (acc.five_hour_reset || "").match(/in\s+(\d+)\s*hr\s*(\d*)\s*min/i);
-  if (relMatch) {
-    const totalDurationMinutes = (parseInt(relMatch[1], 10) || 0) * 60 + (parseInt(relMatch[2], 10) || 0);
-    const createdAt = acc.last_calculated_at || now.getTime();
-    const elapsedMinutes = Math.floor((now.getTime() - createdAt) / (1000 * 60));
-    const remainingMinutes = Math.max(0, totalDurationMinutes - elapsedMinutes);
-
-    if (remainingMinutes <= 0) {
-      const displayPct = autoRecover ? (isUsedMode ? 0 : 100) : (acc.five_hour_percentage ?? 100);
-      return {
-        fiveHourDisplayPct: displayPct,
-        fiveHourStatusText: autoRecover ? "Limit to'liq tiklandi (100% Ready ✅)" : "Tiklanish muddati o'tdi",
-        tooltipText: "Limit tiklangan",
-        isFullyReset: autoRecover,
-      };
+      if (isExhausted) {
+        // If exhausted, the next fresh cycle is tomorrow at this time or +5 hours
+        targetDate.setDate(targetDate.getDate() + 1);
+        diffMs = targetDate.getTime() - now.getTime();
+      } else if (autoRecover) {
+        // If limit is not exhausted and time passed, it is fully reset (fresh)
+        const displayPct = isUsedMode ? 0 : 100;
+        const freshStr = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+        return {
+          fiveHourDisplayPct: displayPct,
+          fiveHourStatusText: `✨ FRESH • Soat ${freshStr} da to'liq tiklandi (100% Ready ✅)`,
+          tooltipText: `Tiklanish vaqti: ${freshStr}`,
+          isFullyReset: true,
+          isExhausted: false,
+          freshTimeStr: freshStr,
+          remainingTimeStr: "0 min",
+          recoveryProgressPct: 100,
+        };
+      }
     }
 
-    const remH = Math.floor(remainingMinutes / 60);
-    const remM = remainingMinutes % 60;
-    const remStr = remH > 0 ? `${remH} hr ${remM} min` : `${remM} min`;
+    const diffMins = Math.max(0, Math.floor(diffMs / (1000 * 60)));
+    const diffSecs = Math.max(0, Math.floor((diffMs % (1000 * 60)) / 1000));
+    const remHours = Math.floor(diffMins / 60);
+    const remMins = diffMins % 60;
+    const remStr =
+      remHours > 0
+        ? `${remHours} hr ${remMins} min`
+        : remMins > 0
+        ? `${remMins} min ${diffSecs}s`
+        : `${diffSecs} soniya`;
+
+    const freshTimeFormatted = `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+
+    // 5-hour rolling cycle progress (300 minutes total)
+    const totalCycleMins = 300;
+    const elapsedMins = Math.max(0, totalCycleMins - diffMins);
+    const recoveryProgressPct = Math.min(100, Math.max(0, Math.round((elapsedMins / totalCycleMins) * 100)));
 
     return {
-      fiveHourDisplayPct: acc.five_hour_percentage ?? (isUsedMode ? 23 : 100),
-      fiveHourStatusText: `Resets in ${remStr}`,
-      tooltipText: `Resets in ${remStr}`,
+      fiveHourDisplayPct: basePct,
+      fiveHourStatusText: isExhausted
+        ? `⛔ LIMIT TUGAGAN • Fresh: ${freshTimeFormatted} da (qoldi: ${remStr})`
+        : `Resets at ${freshTimeFormatted} (qoldi: ${remStr})`,
+      tooltipText: `Fresh tiklanish: ${freshTimeFormatted} (${remStr} qoldi)`,
       isFullyReset: false,
+      isExhausted,
+      freshTimeStr: freshTimeFormatted,
+      remainingTimeStr: remStr,
+      recoveryProgressPct,
     };
   }
 
-  // Fallback default
+  // 2. RELATIVE TIME FORMAT: e.g. "Resets in 57 min", "in 4 hr 17 min", "57m"
+  const hrMatch = rawTarget.match(/(\d+)\s*(?:hr|hour|soat|h)/i);
+  const minMatch = rawTarget.match(/(\d+)\s*(?:min|m)/i);
+
+  if (hrMatch || minMatch) {
+    const h = hrMatch ? parseInt(hrMatch[1], 10) : 0;
+    const m = minMatch ? parseInt(minMatch[1], 10) : 0;
+    const totalDurationMinutes = h * 60 + m;
+
+    if (totalDurationMinutes > 0) {
+      const createdAt = acc.last_calculated_at || now.getTime();
+      const elapsedMs = now.getTime() - createdAt;
+      const totalDurationMs = totalDurationMinutes * 60 * 1000;
+      const remainingMs = Math.max(0, totalDurationMs - elapsedMs);
+
+      const targetMs = createdAt + totalDurationMs;
+      const targetDate = new Date(targetMs);
+      const freshTimeFormatted = targetDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      if (remainingMs <= 0) {
+        const displayPct = autoRecover ? (isUsedMode ? 0 : 100) : basePct;
+        return {
+          fiveHourDisplayPct: displayPct,
+          fiveHourStatusText: autoRecover
+            ? `✨ FRESH • Soat ${freshTimeFormatted} da to'liq tiklandi (100% Ready ✅)`
+            : "Tiklanish muddati yetib keldi",
+          tooltipText: `Tiklandi: ${freshTimeFormatted}`,
+          isFullyReset: autoRecover,
+          isExhausted: false,
+          freshTimeStr: freshTimeFormatted,
+          remainingTimeStr: "0 min",
+          recoveryProgressPct: 100,
+        };
+      }
+
+      const totalRemSecs = Math.floor(remainingMs / 1000);
+      const remH = Math.floor(totalRemSecs / 3600);
+      const remM = Math.floor((totalRemSecs % 3600) / 60);
+      const remS = totalRemSecs % 60;
+      const remStr =
+        remH > 0
+          ? `${remH} hr ${remM} min`
+          : remM > 0
+          ? `${remM} min ${remS}s`
+          : `${remS} soniya`;
+
+      const recoveryProgressPct = Math.min(
+        100,
+        Math.max(0, Math.round(((totalDurationMs - remainingMs) / totalDurationMs) * 100))
+      );
+
+      return {
+        fiveHourDisplayPct: basePct,
+        fiveHourStatusText: isExhausted
+          ? `⛔ LIMIT TUGAGAN • Fresh: ${freshTimeFormatted} da (qoldi: ${remStr})`
+          : `Resets in ${remStr} • Fresh: ${freshTimeFormatted}`,
+        tooltipText: `Fresh tiklanish: ${freshTimeFormatted} (${remStr} qoldi)`,
+        isFullyReset: false,
+        isExhausted,
+        freshTimeStr: freshTimeFormatted,
+        remainingTimeStr: remStr,
+        recoveryProgressPct,
+      };
+    }
+  }
+
+  // 3. FALLBACK DEFAULT
   return {
-    fiveHourDisplayPct: acc.five_hour_percentage ?? 100,
+    fiveHourDisplayPct: basePct,
     fiveHourStatusText: acc.five_hour_reset || "Active window",
     tooltipText: acc.five_hour_reset || "Active window",
-    isFullyReset: acc.five_hour_percentage === 100,
+    isFullyReset: isUsedMode ? basePct === 0 : basePct === 100,
+    isExhausted,
+    freshTimeStr: null,
+    remainingTimeStr: null,
+    recoveryProgressPct: 0,
   };
 }
 
@@ -177,7 +260,7 @@ export default function ExternalAiAccountsCard() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed;
         }
       }
@@ -192,11 +275,11 @@ export default function ExternalAiAccountsCard() {
   const [editingAccount, setEditingAccount] = useState<ExternalAccountQuota | null>(null);
   const [hoveredLimitId, setHoveredLimitId] = useState<string | null>(null);
 
-  // Live rolling update interval: recalculate every 15 seconds
+  // Live rolling update interval: recalculate every 1 second for live countdown
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 15000);
+    }, 1000);
     return () => clearInterval(timer);
   }, []);
 
@@ -583,15 +666,23 @@ export default function ExternalAiAccountsCard() {
                 </button>
               </div>
 
-              {/* 5-Hour Limit Row with Tooltip Hover matching exact screenshot */}
+              {/* 5-Hour Limit Row with Tooltip Hover and Dynamic Fresh Display */}
               <div
                 onMouseEnter={() => setHoveredLimitId(acc.id)}
                 onMouseLeave={() => setHoveredLimitId(null)}
                 style={{
-                  background: "rgba(0, 0, 0, 0.25)",
-                  padding: "8px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid rgba(255, 255, 255, 0.04)",
+                  background: dynamicQuota.isExhausted
+                    ? "rgba(239, 68, 68, 0.08)"
+                    : dynamicQuota.isFullyReset
+                    ? "rgba(16, 185, 129, 0.06)"
+                    : "rgba(0, 0, 0, 0.25)",
+                  padding: "10px 12px",
+                  borderRadius: "8px",
+                  border: dynamicQuota.isExhausted
+                    ? "1px solid rgba(239, 68, 68, 0.35)"
+                    : dynamicQuota.isFullyReset
+                    ? "1px solid rgba(16, 185, 129, 0.35)"
+                    : "1px solid rgba(255, 255, 255, 0.06)",
                   position: "relative",
                   cursor: "default",
                 }}
@@ -604,8 +695,8 @@ export default function ExternalAiAccountsCard() {
                       right: "-10px",
                       top: "50%",
                       transform: "translate(100%, -50%)",
-                      background: "rgba(35, 38, 43, 0.96)",
-                      border: "1px solid rgba(255, 255, 255, 0.15)",
+                      background: "rgba(35, 38, 43, 0.98)",
+                      border: "1px solid rgba(255, 255, 255, 0.2)",
                       borderRadius: "8px",
                       padding: "8px 14px",
                       color: "#e2e8f0",
@@ -630,7 +721,7 @@ export default function ExternalAiAccountsCard() {
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "baseline",
-                    marginBottom: "4px",
+                    marginBottom: "5px",
                   }}
                 >
                   <span style={{ fontSize: "11px", color: "#cbd5e1", fontWeight: 600 }}>
@@ -640,103 +731,197 @@ export default function ExternalAiAccountsCard() {
                     {isPaused
                       ? "Pauzada"
                       : isUsedMode
-                      ? `${fivePct}% ishlatildi (${Math.max(0, 100 - fivePct)}% qoldi)`
-                      : `${fivePct}% left`}
+                      ? `${fivePct}% ishlatildi (${Math.max(0, 100 - fivePct)}% qoldi)${
+                          dynamicQuota.isExhausted ? " ⛔ Tugagan" : ""
+                        }`
+                      : `${fivePct}% left${dynamicQuota.isExhausted ? " (Limit Tugagan ⛔)" : ""}`}
                   </span>
                 </div>
 
                 <div
                   style={{
-                    height: "5px",
+                    height: "6px",
                     borderRadius: "3px",
                     background: "rgba(255, 255, 255, 0.08)",
                     overflow: "hidden",
-                    marginBottom: "4px",
+                    marginBottom: "6px",
                   }}
                 >
                   <div
                     style={{
                       height: "100%",
                       width: `${fivePct}%`,
-                      background: fiveTone,
+                      background: dynamicQuota.isExhausted
+                        ? "#ef4444"
+                        : dynamicQuota.isFullyReset
+                        ? "#10b981"
+                        : fiveTone,
                       borderRadius: "3px",
                       transition: "width 0.4s ease",
                     }}
                   />
                 </div>
 
-                <div
-                  style={{
-                    fontSize: "10px",
-                    color: isPaused
-                      ? "#f87171"
-                      : dynamicQuota.isFullyReset
-                      ? "#34d399"
-                      : "#94a3b8",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px",
-                  }}
-                >
-                  {dynamicQuota.fiveHourStatusText}
-                </div>
+                {/* Fresh & Countdown Status Box */}
+                {dynamicQuota.isExhausted ? (
+                  <div
+                    style={{
+                      marginTop: "6px",
+                      padding: "8px 10px",
+                      background: "rgba(239, 68, 68, 0.14)",
+                      border: "1px solid rgba(239, 68, 68, 0.3)",
+                      borderRadius: "6px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "5px",
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span
+                        style={{
+                          fontSize: "11px",
+                          fontWeight: 700,
+                          color: "#f87171",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "5px",
+                        }}
+                      >
+                        <Icon name="refresh" size={12} />
+                        Qayta tiklanish (Fresh):
+                      </span>
+                      <span style={{ fontSize: "12px", fontWeight: 800, color: "#38bdf8" }}>
+                        {dynamicQuota.freshTimeStr ? `Bugun ${dynamicQuota.freshTimeStr} da` : "Tez orada"}
+                      </span>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px" }}>
+                      <span style={{ color: "var(--text-muted, #94a3b8)" }}>Tiklanishgacha vaqt:</span>
+                      <span style={{ color: "#fbbf24", fontWeight: 700 }}>
+                        Qoldi: {dynamicQuota.remainingTimeStr || "Hisoblanmoqda..."}
+                      </span>
+                    </div>
+
+                    {/* Fresh Recovery Progress Bar */}
+                    <div style={{ marginTop: "2px" }}>
+                      <div
+                        style={{
+                          height: "4px",
+                          background: "rgba(255, 255, 255, 0.1)",
+                          borderRadius: "2px",
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${dynamicQuota.recoveryProgressPct}%`,
+                            background: "linear-gradient(90deg, #f59e0b, #10b981)",
+                            transition: "width 0.5s ease",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      fontSize: "11px",
+                      color: isPaused
+                        ? "#f87171"
+                        : dynamicQuota.isFullyReset
+                        ? "#34d399"
+                        : "#94a3b8",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "4px",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span>{dynamicQuota.fiveHourStatusText}</span>
+                    {dynamicQuota.freshTimeStr && !dynamicQuota.isFullyReset && (
+                      <span style={{ color: "#38bdf8", fontWeight: 600, fontSize: "10px" }}>
+                        Fresh: {dynamicQuota.freshTimeStr}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Weekly Limit Row */}
-              <div
-                style={{
-                  background: "rgba(0, 0, 0, 0.25)",
-                  padding: "8px 10px",
-                  borderRadius: "6px",
-                  border: `1px solid ${
-                    (!isUsedMode && weeklyPct <= 5) || (isUsedMode && weeklyPct >= 95)
-                      ? "rgba(239, 68, 68, 0.3)"
-                      : "rgba(255, 255, 255, 0.04)"
-                  }`,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "baseline",
-                    marginBottom: "4px",
-                  }}
-                >
-                  <span style={{ fontSize: "11px", color: "#cbd5e1", fontWeight: 600 }}>
-                    Weekly Limit (All Models):
-                  </span>
-                  <span style={{ fontSize: "12px", fontWeight: 700, color: weeklyTone }}>
-                    {isPaused
-                      ? "Pauzada"
-                      : isUsedMode
-                      ? `${weeklyPct}% ishlatildi (${Math.max(0, 100 - weeklyPct)}% qoldi)`
-                      : `${weeklyPct}% left`}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: "5px",
-                    borderRadius: "3px",
-                    background: "rgba(255, 255, 255, 0.08)",
-                    overflow: "hidden",
-                    marginBottom: "4px",
-                  }}
-                >
+              {(() => {
+                const isWeeklyExhausted = isUsedMode ? weeklyPct >= 100 : weeklyPct <= 0;
+                return (
                   <div
                     style={{
-                      height: "100%",
-                      width: `${weeklyPct}%`,
-                      background: weeklyTone,
-                      borderRadius: "3px",
-                      transition: "width 0.4s ease",
+                      background: "rgba(0, 0, 0, 0.25)",
+                      padding: "8px 10px",
+                      borderRadius: "6px",
+                      border: `1px solid ${
+                        isWeeklyExhausted
+                          ? "rgba(239, 68, 68, 0.3)"
+                          : "rgba(255, 255, 255, 0.04)"
+                      }`,
                     }}
-                  />
-                </div>
-                <div style={{ fontSize: "10px", color: weeklyPct === 0 ? "#f87171" : "#94a3b8" }}>
-                  {acc.weekly_reset || "Active cycle"}
-                </div>
-              </div>
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      <span style={{ fontSize: "11px", color: "#cbd5e1", fontWeight: 600 }}>
+                        Weekly Limit (All Models):
+                      </span>
+                      <span style={{ fontSize: "12px", fontWeight: 700, color: weeklyTone }}>
+                        {isPaused
+                          ? "Pauzada"
+                          : isUsedMode
+                          ? `${weeklyPct}% ishlatildi (${Math.max(0, 100 - weeklyPct)}% qoldi)`
+                          : `${weeklyPct}% left`}
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: "5px",
+                        borderRadius: "3px",
+                        background: "rgba(255, 255, 255, 0.08)",
+                        overflow: "hidden",
+                        marginBottom: "4px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${weeklyPct}%`,
+                          background: weeklyTone,
+                          borderRadius: "3px",
+                          transition: "width 0.4s ease",
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        fontSize: "10px",
+                        color: isWeeklyExhausted ? "#f87171" : "#94a3b8",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <span>{acc.weekly_reset || "Active cycle"}</span>
+                      {acc.weekly_reset?.includes("Resets") && (
+                        <span style={{ color: "#38bdf8", fontWeight: 600 }}>
+                          {acc.weekly_reset.replace(/^Resets\s*/i, "Fresh: ")}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Cloud Session Credits (Optional - Claude / Cursor) */}
               {acc.cloud_credits_remaining !== undefined && (
