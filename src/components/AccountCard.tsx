@@ -40,14 +40,24 @@ function MiniQuotaBadges({ quota }: { quota?: ProfileSummary["quota"] }) {
     const isMedium = pct >= 20 && pct < 50;
     const tone = isLow ? "danger" : isMedium ? "warning" : "success";
     
+    let freshTime = "";
+    if (bucket.reset_time && pct < 100) {
+      try {
+        const resetDate = new Date(bucket.reset_time);
+        freshTime = resetDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      } catch {
+        // ignore
+      }
+    }
+
     return (
       <div 
         key={bucket.bucket_id}
         className={`mini-quota-badge mini-quota-badge--${tone}`} 
-        title={`${bucket.display_name}: ${pct}% (${bucket.description || ""})`}
+        title={`${bucket.display_name}: ${pct}% ${freshTime ? `• Fresh: ${freshTime}` : ""} (${bucket.description || ""})`}
       >
         <span className="mini-quota-badge__label">{labelText}</span>
-        <span>{pct}%</span>
+        <span>{pct === 0 && freshTime ? `0% (${freshTime})` : `${pct}%`}</span>
       </div>
     );
   };

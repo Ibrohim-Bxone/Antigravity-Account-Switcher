@@ -32,23 +32,46 @@ fn get_system_lang() -> String {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    #[cfg(target_os = "windows")]
-    {
-        // Enforce single instance lock
-        switcher_windows::check_single_instance();
-
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-        if let Err(e) = rt.block_on(switcher_windows::check_and_install_webview2()) {
-            eprintln!("Failed to check or install WebView2: {}", e);
-            std::process::exit(1);
+fn log_trace_lib(step: &str) {
+    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+        let log_dir = std::path::Path::new(&user_profile)
+            .join("AppData")
+            .join("Local")
+            .join("AntigravitySwitcher")
+            .join("logs");
+        let _ = std::fs::create_dir_all(&log_dir);
+        let log_file = log_dir.join("startup_trace.log");
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log_file) {
+            let _ = writeln!(f, "[{}] [lib] {}", chrono::Local::now().to_rfc3339(), step);
         }
     }
+}
 
-    tauri::Builder::default()
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    log_trace_lib("pub fn run() entered");
+    #[cfg(target_os = "windows")]
+    {
+        log_trace_lib("Before check_single_instance");
+        switcher_windows::check_single_instance();
+        log_trace_lib("After check_single_instance");
+
+        let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        log_trace_lib("Checking WebView2");
+        if let Err(e) = rt.block_on(switcher_windows::check_and_install_webview2()) {
+            eprintln!("Failed to check or install WebView2: {}", e);
+            log_trace_lib(&format!("WebView2 error: {}", e));
+            std::process::exit(1);
+        }
+        log_trace_lib("WebView2 check passed");
+    }
+
+    log_trace_lib("Building Tauri application");
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            log_trace_lib("Inside tauri setup hook");
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -57,10 +80,13 @@ pub fn run() {
                 )?;
             }
 
+            log_trace_lib("Initializing SwitcherService");
             let service = SwitcherService::initialize().map_err(|e| {
                 eprintln!("Failed to initialize SwitcherService: {:?}", e);
+                log_trace_lib(&format!("Failed to initialize SwitcherService: {:?}", e));
                 e
             })?;
+            log_trace_lib("SwitcherService initialized successfully");
 
             // Prefetch quotas in the background on startup
             let service_clone = service.clone();
@@ -132,6 +158,9 @@ pub fn run() {
                 .build(app)?;
 
             if let Some(main_win) = app.get_webview_window("main") {
+                let _ = main_win.show();
+                let _ = main_win.unminimize();
+                let _ = main_win.set_focus();
                 #[cfg(target_os = "windows")]
                 {
                     if let Ok(hwnd) = main_win.hwnd() {
@@ -143,9 +172,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            log_trace_lib(&format!("Window event on {}: {:?}", window.label(), event));
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                log_trace_lib("WindowEvent::CloseRequested detected!");
                 let service = window.state::<std::sync::Arc<SwitcherService>>();
                 let minimize = service.minimize_to_tray();
+                log_trace_lib(&format!("minimize_to_tray = {}", minimize));
                 if minimize {
                     api.prevent_close();
                     let _ = window.hide();
@@ -199,8 +231,32 @@ pub fn run() {
             commands::close_app_lock,
             commands::open_browser_url,
             commands::send_email_report
-        ])
-        .build(tauri::generate_context!())
-        .expect("error while building tauri application")
-        .run(|_app_handle, _event| {});
+        ]);
+
+    log_trace_lib("Calling builder.build(tauri::generate_context!())");
+    let app = match builder.build(tauri::generate_context!()) {
+        Ok(a) => {
+            log_trace_lib("Tauri app build succeeded!");
+            a
+        }
+        Err(e) => {
+            log_trace_lib(&format!("Tauri app build FAILED with error: {:?}", e));
+            eprintln!("Tauri build error: {:?}", e);
+            return;
+        }
+    };
+
+    log_trace_lib("Calling app.run()");
+    app.run(|_app_handle, event| {
+        match event {
+            tauri::RunEvent::ExitRequested { code, .. } => {
+                log_trace_lib(&format!("RunEvent::ExitRequested with code: {:?}", code));
+            }
+            tauri::RunEvent::Exit => {
+                log_trace_lib("RunEvent::Exit");
+            }
+            _ => {}
+        }
+    });
+    log_trace_lib("app.run() completed");
 }
