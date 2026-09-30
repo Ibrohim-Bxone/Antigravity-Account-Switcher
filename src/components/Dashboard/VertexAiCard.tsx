@@ -12,13 +12,13 @@ import type { VertexAiBalance } from "../../types";
 const STORAGE_KEY = "switcher_vertex_ai_balance";
 
 const DEFAULT_VERTEX_AI: VertexAiBalance = {
-  enabled: true,
-  project_id: "vertex-ai-workspace-pro",
-  billing_account_id: "BILLING-ACCOUNT-SECURE",
+  enabled: false,
+  project_id: "",
+  billing_account_id: "",
   initial_credit: 300.0,
-  remaining_credit: 284.5,
+  remaining_credit: 300.0,
   currency: "USD",
-  last_updated: "Real-time sync",
+  last_updated: "Ulangan emas",
 };
 
 export default function VertexAiCard() {
@@ -42,8 +42,11 @@ export default function VertexAiCard() {
     }
   }, [data]);
 
-  const usedCredit = Math.max(0, data.initial_credit - data.remaining_credit);
-  const remainingPct = Math.round((data.remaining_credit / data.initial_credit) * 100);
+  const isConfigured = Boolean(data.enabled && data.project_id);
+  const initialCredit = data.initial_credit > 0 ? data.initial_credit : 300.0;
+  const remainingCredit = isConfigured ? data.remaining_credit : 0;
+  const usedCredit = Math.max(0, initialCredit - remainingCredit);
+  const remainingPct = isConfigured ? Math.round((remainingCredit / initialCredit) * 100) : 0;
   const tone = remainingPct < 20 ? "#ef4444" : remainingPct < 50 ? "#f59e0b" : "#3b82f6";
 
   const handleSave = (e: React.FormEvent<HTMLFormElement>) => {
@@ -51,14 +54,14 @@ export default function VertexAiCard() {
     const form = e.currentTarget;
     const formData = new FormData(form);
     const initialRaw = parseFloat(formData.get("initial") as string);
-    const initial = isNaN(initialRaw) ? 300.0 : initialRaw;
+    const initial = isNaN(initialRaw) || initialRaw <= 0 ? 300.0 : initialRaw;
     const remainingRaw = parseFloat(formData.get("remaining") as string);
-    const remaining = isNaN(remainingRaw) ? 300.0 : remainingRaw;
-    const projectId = (formData.get("project_id") as string) || data.project_id;
-    const billingId = (formData.get("billing_id") as string) || data.billing_account_id;
+    const remaining = isNaN(remainingRaw) ? initial : remainingRaw;
+    const projectId = ((formData.get("project_id") as string) || "").trim();
+    const billingId = ((formData.get("billing_id") as string) || "").trim();
 
     setData({
-      enabled: true,
+      enabled: Boolean(projectId),
       project_id: projectId,
       billing_account_id: billingId,
       initial_credit: initial,
@@ -123,15 +126,22 @@ export default function VertexAiCard() {
                 textTransform: "uppercase",
                 padding: "2px 6px",
                 borderRadius: "4px",
-                background: "rgba(59, 130, 246, 0.2)",
-                color: "#60a5fa",
+                background: isConfigured ? "rgba(59, 130, 246, 0.2)" : "rgba(148, 163, 184, 0.2)",
+                color: isConfigured ? "#60a5fa" : "#94a3b8",
                 letterSpacing: "0.5px"
               }}>
-                $300 Free Trial
+                {isConfigured ? "$300 Free Trial" : "Ulanmagan"}
               </span>
             </div>
             <p style={{ margin: 0, fontSize: "11px", color: "var(--text-muted, #94a3b8)" }}>
-              Loyihalar: <code style={{ color: "#93c5fd" }}>{data.project_id}</code> • Billing: <code style={{ color: "#93c5fd" }}>{data.billing_account_id}</code>
+              {isConfigured ? (
+                <>
+                  Loyihalar: <code style={{ color: "#93c5fd" }}>{data.project_id}</code>
+                  {data.billing_account_id ? <> • Billing: <code style={{ color: "#93c5fd" }}>{data.billing_account_id}</code></> : null}
+                </>
+              ) : (
+                "GCP Cloud Billing va $300 sinov kredit balansi monitoringi"
+              )}
             </p>
           </div>
         </div>
@@ -142,7 +152,7 @@ export default function VertexAiCard() {
             display: "flex",
             alignItems: "center",
             gap: "6px",
-            padding: "6px 12px",
+            padding: "6px 14px",
             borderRadius: "6px",
             background: "rgba(59, 130, 246, 0.12)",
             border: "1px solid rgba(59, 130, 246, 0.3)",
@@ -159,96 +169,145 @@ export default function VertexAiCard() {
             e.currentTarget.style.background = "rgba(59, 130, 246, 0.12)";
           }}
         >
-          <Icon name="settings" size={14} />
-          <span>Kreditni yangilash / Sozlash</span>
+          <Icon name={isConfigured ? "settings" : "plus"} size={14} />
+          <span>{isConfigured ? "Kreditni yangilash / Sozlash" : "Vertex AI Ulash"}</span>
         </button>
       </div>
 
-      {/* Main Metric Cards */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-        gap: "12px",
-        marginBottom: "12px"
-      }}>
-        {/* Remaining Balance */}
-        <div style={{
-          background: "rgba(255, 255, 255, 0.03)",
-          borderRadius: "8px",
-          padding: "10px 14px",
-          border: "1px solid rgba(255, 255, 255, 0.06)"
-        }}>
-          <div style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginBottom: "4px" }}>
-            Qolgan kredit balansi:
+      {!isConfigured ? (
+        <div
+          style={{
+            background: "rgba(255, 255, 255, 0.02)",
+            border: "1px dashed rgba(59, 130, 246, 0.3)",
+            borderRadius: "10px",
+            padding: "24px 20px",
+            textAlign: "center",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "10px",
+          }}
+        >
+          <div style={{ maxWidth: "480px" }}>
+            <h4 style={{ margin: "0 0 6px 0", fontSize: "14px", fontWeight: 700, color: "#fff" }}>
+              Vertex AI balansi ulanmagan
+            </h4>
+            <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted, #94a3b8)", lineHeight: "1.5" }}>
+              Google Cloud Vertex AI $300 sinov kredit balansingiz sarfini va qoldig'ini kuzatish uchun o'z GCP Project ID va Billing ma'lumotlaringizni kiriting.
+            </p>
           </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
-            <span style={{ fontSize: "20px", fontWeight: 800, color: "#60a5fa" }}>
-              ${data.remaining_credit.toFixed(2)}
-            </span>
-            <span style={{ fontSize: "12px", color: "var(--text-muted, #94a3b8)" }}>
-              / ${data.initial_credit.toFixed(2)}
-            </span>
-          </div>
+          <button
+            onClick={() => setEditModalOpen(true)}
+            style={{
+              marginTop: "4px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "7px 16px",
+              borderRadius: "6px",
+              background: "#3b82f6",
+              border: "none",
+              color: "#fff",
+              fontSize: "12px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "opacity 0.2s",
+            }}
+          >
+            <Icon name="plus" size={14} />
+            <span>Vertex AI Balansini Ulash</span>
+          </button>
         </div>
+      ) : (
+        <>
+          {/* Main Metric Cards */}
+          <div style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+            gap: "12px",
+            marginBottom: "12px"
+          }}>
+            {/* Remaining Balance */}
+            <div style={{
+              background: "rgba(255, 255, 255, 0.03)",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              border: "1px solid rgba(255, 255, 255, 0.06)"
+            }}>
+              <div style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginBottom: "4px" }}>
+                Qolgan kredit balansi:
+              </div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "6px" }}>
+                <span style={{ fontSize: "20px", fontWeight: 800, color: "#60a5fa" }}>
+                  ${data.remaining_credit.toFixed(2)}
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--text-muted, #94a3b8)" }}>
+                  / ${data.initial_credit.toFixed(2)}
+                </span>
+              </div>
+            </div>
 
-        {/* Used Amount */}
-        <div style={{
-          background: "rgba(255, 255, 255, 0.03)",
-          borderRadius: "8px",
-          padding: "10px 14px",
-          border: "1px solid rgba(255, 255, 255, 0.06)"
-        }}>
-          <div style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginBottom: "4px" }}>
-            Sarflangan mablag':
-          </div>
-          <div style={{ fontSize: "20px", fontWeight: 800, color: "#f59e0b" }}>
-            ${usedCredit.toFixed(2)}
-          </div>
-        </div>
+            {/* Used Amount */}
+            <div style={{
+              background: "rgba(255, 255, 255, 0.03)",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              border: "1px solid rgba(255, 255, 255, 0.06)"
+            }}>
+              <div style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginBottom: "4px" }}>
+                Sarflangan mablag':
+              </div>
+              <div style={{ fontSize: "20px", fontWeight: 800, color: "#f59e0b" }}>
+                ${usedCredit.toFixed(2)}
+              </div>
+            </div>
 
-        {/* Remaining Percentage */}
-        <div style={{
-          background: "rgba(255, 255, 255, 0.03)",
-          borderRadius: "8px",
-          padding: "10px 14px",
-          border: "1px solid rgba(255, 255, 255, 0.06)"
-        }}>
-          <div style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginBottom: "4px" }}>
-            Zaxira ulushi:
+            {/* Remaining Percentage */}
+            <div style={{
+              background: "rgba(255, 255, 255, 0.03)",
+              borderRadius: "8px",
+              padding: "10px 14px",
+              border: "1px solid rgba(255, 255, 255, 0.06)"
+            }}>
+              <div style={{ fontSize: "11px", color: "var(--text-muted, #94a3b8)", marginBottom: "4px" }}>
+                Zaxira ulushi:
+              </div>
+              <div style={{ fontSize: "20px", fontWeight: 800, color: tone }}>
+                {remainingPct}%
+              </div>
+            </div>
           </div>
-          <div style={{ fontSize: "20px", fontWeight: 800, color: tone }}>
-            {remainingPct}%
+
+          {/* Progress Bar */}
+          <div style={{
+            height: "8px",
+            borderRadius: "4px",
+            background: "rgba(255, 255, 255, 0.08)",
+            overflow: "hidden",
+            marginBottom: "8px"
+          }}>
+            <div style={{
+              height: "100%",
+              width: `${remainingPct}%`,
+              background: "linear-gradient(90deg, #3b82f6, #60a5fa)",
+              borderRadius: "4px",
+              transition: "width 0.4s ease"
+            }} />
           </div>
-        </div>
-      </div>
 
-      {/* Progress Bar */}
-      <div style={{
-        height: "8px",
-        borderRadius: "4px",
-        background: "rgba(255, 255, 255, 0.08)",
-        overflow: "hidden",
-        marginBottom: "8px"
-      }}>
-        <div style={{
-          height: "100%",
-          width: `${remainingPct}%`,
-          background: "linear-gradient(90deg, #3b82f6, #60a5fa)",
-          borderRadius: "4px",
-          transition: "width 0.4s ease"
-        }} />
-      </div>
-
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        fontSize: "11px",
-        color: "var(--text-muted, #94a3b8)"
-      }}>
-        <span>Status: <strong style={{ color: "#10b981" }}>Faol (Cloud Billing ulandi)</strong></span>
-        <span>Oxirgi tekshiruv: <strong>{data.last_updated}</strong></span>
-      </div>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: "11px",
+            color: "var(--text-muted, #94a3b8)"
+          }}>
+            <span>Status: <strong style={{ color: "#10b981" }}>Faol (Cloud Billing ulandi)</strong></span>
+            <span>Oxirgi tekshiruv: <strong>{data.last_updated}</strong></span>
+          </div>
+        </>
+      )}
 
       {/* Edit Modal rendered via Portal to document.body */}
       {editModalOpen && typeof document !== "undefined" && createPortal(
@@ -312,7 +371,8 @@ export default function VertexAiCard() {
                 </label>
                 <input
                   name="project_id"
-                  defaultValue={data.project_id}
+                  defaultValue={data.project_id || ""}
+                  placeholder="GCP Project ID (masalan: my-gcp-project-123)"
                   required
                   style={{
                     width: "100%",
@@ -332,7 +392,8 @@ export default function VertexAiCard() {
                 </label>
                 <input
                   name="billing_id"
-                  defaultValue={data.billing_account_id}
+                  defaultValue={data.billing_account_id || ""}
+                  placeholder="Billing ID (masalan: 01ABCD-23EFGH-456789)"
                   style={{
                     width: "100%",
                     padding: "8px 10px",
@@ -354,7 +415,8 @@ export default function VertexAiCard() {
                     name="initial"
                     type="number"
                     step="0.01"
-                    defaultValue={data.initial_credit}
+                    defaultValue={data.initial_credit || 300}
+                    placeholder="300.00"
                     style={{
                       width: "100%",
                       padding: "8px 10px",
@@ -374,7 +436,8 @@ export default function VertexAiCard() {
                     name="remaining"
                     type="number"
                     step="0.01"
-                    defaultValue={data.remaining_credit}
+                    defaultValue={data.remaining_credit || 300}
+                    placeholder="300.00"
                     style={{
                       width: "100%",
                       padding: "8px 10px",
@@ -388,37 +451,62 @@ export default function VertexAiCard() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px", marginTop: "20px" }}>
-                <button
-                  type="button"
-                  onClick={() => setEditModalOpen(false)}
-                  style={{
-                    background: "none",
-                    border: "1px solid #475569",
-                    color: "#94a3b8",
-                    padding: "8px 14px",
-                    borderRadius: "6px",
-                    fontSize: "12px",
-                    cursor: "pointer"
-                  }}
-                >
-                  Bekor qilish
-                </button>
-                <button
-                  type="submit"
-                  style={{
-                    background: "#3b82f6",
-                    border: "none",
-                    color: "#fff",
-                    padding: "8px 16px",
-                    borderRadius: "6px",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    cursor: "pointer"
-                  }}
-                >
-                  Saqlash
-                </button>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "20px" }}>
+                {isConfigured ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setData(DEFAULT_VERTEX_AI);
+                      setEditModalOpen(false);
+                    }}
+                    style={{
+                      background: "rgba(239, 68, 68, 0.15)",
+                      border: "1px solid rgba(239, 68, 68, 0.4)",
+                      color: "#ef4444",
+                      padding: "8px 14px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Ulanishni uzish
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setEditModalOpen(false)}
+                    style={{
+                      background: "none",
+                      border: "1px solid #475569",
+                      color: "#94a3b8",
+                      padding: "8px 14px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Bekor qilish
+                  </button>
+                  <button
+                    type="submit"
+                    style={{
+                      background: "#3b82f6",
+                      border: "none",
+                      color: "#fff",
+                      padding: "8px 16px",
+                      borderRadius: "6px",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Saqlash
+                  </button>
+                </div>
               </div>
             </form>
           </div>

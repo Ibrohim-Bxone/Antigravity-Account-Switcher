@@ -12,61 +12,7 @@ import type { ExternalAccountQuota } from "../../types";
 
 const STORAGE_KEY = "switcher_external_ai_accounts_v7";
 
-export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [
-  {
-    id: "claude-cursor-opus",
-    provider: "claude",
-    name: "Claude Pro (Cursor / Opus 5.5)",
-    email: "user@anthropic.pro",
-    plan: "Claude Pro",
-    model: "Opus 5.5 High",
-    percentage_mode: "used",
-    context_window: "172k / 1M (17%)",
-    five_hour_percentage: 19,
-    five_hour_reset: "Resets in 57 min",
-    five_hour_target_time: "in 57 min",
-    weekly_percentage: 0,
-    weekly_reset: "Resets Tue 10:00 AM",
-    cloud_credits_remaining: 98,
-    cloud_credits_total: 100,
-    cloud_credits_expiry: "Expires 12:59 PM GMT+5, Nov 5",
-    auto_recover: true,
-    last_calculated_at: Date.now(),
-    status: "active",
-  },
-  {
-    id: "chatgpt-plus-primary",
-    provider: "chatgpt",
-    name: "ChatGPT Plus",
-    email: "user@openai.plus",
-    plan: "ChatGPT Plus",
-    model: "GPT-4o / Codex",
-    percentage_mode: "remaining",
-    five_hour_percentage: 0,
-    five_hour_reset: "Resets at 7:11 PM",
-    five_hour_target_time: "19:11",
-    weekly_percentage: 75,
-    weekly_reset: "75% left • Active cycle",
-    auto_recover: true,
-    last_calculated_at: Date.now(),
-    status: "exhausted",
-  },
-  {
-    id: "claude-pro-backup",
-    provider: "claude",
-    name: "Claude Pro #2 (Pauzada)",
-    email: "backup@anthropic.pro",
-    plan: "Claude Pro (To'lov qilinmagan)",
-    model: "Obuna to'xtatilgan",
-    percentage_mode: "used",
-    five_hour_percentage: 0,
-    five_hour_reset: "To'lov qilinmagan / Pauzada",
-    weekly_percentage: 0,
-    weekly_reset: "Obuna to'xtatilgan",
-    auto_recover: false,
-    status: "paused",
-  },
-];
+export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [];
 
 export interface DynamicQuotaResult {
   fiveHourDisplayPct: number;
@@ -292,41 +238,30 @@ export default function ExternalAiAccountsCard() {
     }
   }, [accounts]);
 
-  const handleResetToRealData = () => {
-    setAccounts(DEFAULT_ACCOUNTS);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_ACCOUNTS));
-    } catch {
-      // ignore
-    }
-    setEditModalOpen(false);
-    setEditingAccount(null);
-  };
-
   const handleSaveAccount = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = e.currentTarget;
     const formData = new FormData(form);
     const id = editingAccount ? editingAccount.id : `ext-${Date.now()}`;
-    const name = (formData.get("name") as string) || editingAccount?.name || "AI Account";
     const provider = (formData.get("provider") as "claude" | "chatgpt") || editingAccount?.provider || "claude";
-    const plan = (formData.get("plan") as string) || editingAccount?.plan || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
-    const model = (formData.get("model") as string) || editingAccount?.model || "";
-    const email = (formData.get("email") as string) || editingAccount?.email || (provider === "claude" ? "user@anthropic.pro" : "user@openai.plus");
-    const context_window = (formData.get("context_window") as string) || editingAccount?.context_window || "";
+    const name = (formData.get("name") as string)?.trim() || editingAccount?.name || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
+    const plan = (formData.get("plan") as string)?.trim() || editingAccount?.plan || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
+    const model = (formData.get("model") as string)?.trim() || editingAccount?.model || "";
+    const email = (formData.get("email") as string)?.trim() || editingAccount?.email || "";
+    const context_window = (formData.get("context_window") as string)?.trim() || editingAccount?.context_window || "";
 
     const fiveHourPct = Math.min(100, Math.max(0, parseInt(formData.get("five_hour_percentage") as string) || 0));
-    const fiveHourReset = (formData.get("five_hour_reset") as string) || "Resets at 7:11 PM";
-    const fiveHourTargetTime = (formData.get("five_hour_target_time") as string) || "19:11";
+    const fiveHourReset = (formData.get("five_hour_reset") as string)?.trim() || (provider === "claude" ? "Resets in 5 hours" : "Resets at rolling time");
+    const fiveHourTargetTime = (formData.get("five_hour_target_time") as string)?.trim() || "";
 
     const weeklyPct = Math.min(100, Math.max(0, parseInt(formData.get("weekly_percentage") as string) || 0));
-    const weeklyReset = (formData.get("weekly_reset") as string) || "Active cycle";
+    const weeklyReset = (formData.get("weekly_reset") as string)?.trim() || "Active cycle";
 
     const creditsRemainingRaw = formData.get("cloud_credits_remaining") as string;
-    const cloudCreditsRemaining = creditsRemainingRaw ? parseFloat(creditsRemainingRaw) : undefined;
+    const cloudCreditsRemaining = creditsRemainingRaw !== "" && !isNaN(parseFloat(creditsRemainingRaw)) ? parseFloat(creditsRemainingRaw) : undefined;
     const creditsTotalRaw = formData.get("cloud_credits_total") as string;
-    const cloudCreditsTotal = creditsTotalRaw ? parseFloat(creditsTotalRaw) : undefined;
-    const cloudCreditsExpiry = (formData.get("cloud_credits_expiry") as string) || undefined;
+    const cloudCreditsTotal = creditsTotalRaw !== "" && !isNaN(parseFloat(creditsTotalRaw)) ? parseFloat(creditsTotalRaw) : undefined;
+    const cloudCreditsExpiry = ((formData.get("cloud_credits_expiry") as string) || "").trim() || undefined;
 
     const autoRecover = formData.get("auto_recover") === "on";
 
@@ -480,28 +415,6 @@ export default function ExternalAiAccountsCard() {
 
         <div style={{ display: "flex", gap: "8px" }}>
           <button
-            onClick={handleResetToRealData}
-            title="Haqiqiy skrinshot ko'rsatkichlarini tiklash"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "6px",
-              padding: "6px 10px",
-              borderRadius: "6px",
-              background: "rgba(255, 255, 255, 0.05)",
-              border: "1px solid rgba(255, 255, 255, 0.12)",
-              color: "#94a3b8",
-              fontSize: "11px",
-              fontWeight: 500,
-              cursor: "pointer",
-              transition: "all 0.2s",
-            }}
-          >
-            <Icon name="refresh" size={12} />
-            <span>Skrinshot Ma'lumotlarini Tiklash</span>
-          </button>
-
-          <button
             onClick={() => {
               setEditingAccount(null);
               setEditModalOpen(true);
@@ -510,10 +423,10 @@ export default function ExternalAiAccountsCard() {
               display: "flex",
               alignItems: "center",
               gap: "6px",
-              padding: "6px 12px",
+              padding: "6px 14px",
               borderRadius: "6px",
-              background: "rgba(245, 158, 11, 0.12)",
-              border: "1px solid rgba(245, 158, 11, 0.3)",
+              background: "rgba(245, 158, 11, 0.15)",
+              border: "1px solid rgba(245, 158, 11, 0.4)",
               color: "#f59e0b",
               fontSize: "12px",
               fontWeight: 600,
@@ -522,19 +435,82 @@ export default function ExternalAiAccountsCard() {
             }}
           >
             <Icon name="plus" size={14} />
-            <span>Akkaunt qo'shish / Sozlash</span>
+            <span>Akkaunt qo'shish</span>
           </button>
         </div>
       </div>
 
-      {/* Grid of Accounts */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: "14px",
-        }}
-      >
+      {/* Grid of Accounts or Clean Empty State */}
+      {accounts.length === 0 ? (
+        <div
+          style={{
+            background: "rgba(255, 255, 255, 0.02)",
+            border: "1px dashed rgba(245, 158, 11, 0.3)",
+            borderRadius: "10px",
+            padding: "32px 20px",
+            textAlign: "center",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "12px",
+          }}
+        >
+          <div
+            style={{
+              width: "48px",
+              height: "48px",
+              borderRadius: "12px",
+              background: "rgba(245, 158, 11, 0.12)",
+              color: "#f59e0b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Icon name="shield" size={24} />
+          </div>
+          <div style={{ maxWidth: "480px" }}>
+            <h4 style={{ margin: "0 0 6px 0", fontSize: "14px", fontWeight: 700, color: "#fff" }}>
+              Hech qanday tashqi AI hisobi ulanmagan
+            </h4>
+            <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted, #94a3b8)", lineHeight: "1.6" }}>
+              Claude Pro va ChatGPT Plus hisoblaringizning 5-soatlik va haftalik limitlari, rolling-reset vaqtlarini real vaqtda kuzatish uchun o'z hisobingizni qo'shing. Barcha ma'lumotlar faqat sizning qurilmangizdagi mahalliy brauzer xotirasida (localStorage) saqlanadi.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setEditingAccount(null);
+              setEditModalOpen(true);
+            }}
+            style={{
+              marginTop: "6px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 18px",
+              borderRadius: "6px",
+              background: "#f59e0b",
+              border: "none",
+              color: "#000",
+              fontSize: "12px",
+              fontWeight: 700,
+              cursor: "pointer",
+              transition: "opacity 0.2s",
+            }}
+          >
+            <Icon name="plus" size={14} />
+            <span>Birinchi Hisobni Qo'shish</span>
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: "14px",
+          }}
+        >
         {accounts.map((acc) => {
           const isClaude = acc.provider === "claude";
           const isPaused = acc.status === "paused";
@@ -995,6 +971,7 @@ export default function ExternalAiAccountsCard() {
           );
         })}
       </div>
+      )}
 
       {/* Edit / Add Modal using createPortal to prevent getting stuck */}
       {editModalOpen &&
@@ -1065,7 +1042,8 @@ export default function ExternalAiAccountsCard() {
                   </label>
                   <input
                     name="name"
-                    defaultValue={editingAccount?.name || "ChatGPT Plus"}
+                    defaultValue={editingAccount?.name || ""}
+                    placeholder="Masalan: Asosiy Claude Pro yoki ChatGPT"
                     required
                     style={{
                       width: "100%",
@@ -1086,7 +1064,7 @@ export default function ExternalAiAccountsCard() {
                     </label>
                     <select
                       name="provider"
-                      defaultValue={editingAccount?.provider || "chatgpt"}
+                      defaultValue={editingAccount?.provider || "claude"}
                       style={{
                         width: "100%",
                         padding: "8px 10px",
@@ -1097,8 +1075,8 @@ export default function ExternalAiAccountsCard() {
                         boxSizing: "border-box",
                       }}
                     >
-                      <option value="chatgpt">ChatGPT (OpenAI / Codex)</option>
                       <option value="claude">Claude (Anthropic / Cursor)</option>
+                      <option value="chatgpt">ChatGPT (OpenAI / Codex)</option>
                     </select>
                   </div>
                   <div style={{ flex: 1 }}>
@@ -1107,7 +1085,8 @@ export default function ExternalAiAccountsCard() {
                     </label>
                     <input
                       name="plan"
-                      defaultValue={editingAccount?.plan || "ChatGPT Plus"}
+                      defaultValue={editingAccount?.plan || ""}
+                      placeholder="Masalan: Claude Pro yoki ChatGPT Plus"
                       style={{
                         width: "100%",
                         padding: "8px 10px",
@@ -1121,23 +1100,46 @@ export default function ExternalAiAccountsCard() {
                   </div>
                 </div>
 
-                <div style={{ marginBottom: "12px" }}>
-                  <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "4px" }}>
-                    Model nomi (masalan: GPT-4o / Codex yoki Opus 5.5 High):
-                  </label>
-                  <input
-                    name="model"
-                    defaultValue={editingAccount?.model || "GPT-4o / Codex"}
-                    style={{
-                      width: "100%",
-                      padding: "8px 10px",
-                      borderRadius: "6px",
-                      background: "#0f172a",
-                      border: "1px solid #334155",
-                      color: "#fff",
-                      boxSizing: "border-box",
-                    }}
-                  />
+                <div style={{ display: "flex", gap: "10px", marginBottom: "12px" }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "4px" }}>
+                      Model nomi:
+                    </label>
+                    <input
+                      name="model"
+                      defaultValue={editingAccount?.model || ""}
+                      placeholder="Masalan: Opus 5.5 High yoki GPT-4o"
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        borderRadius: "6px",
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        color: "#fff",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: "block", fontSize: "12px", color: "#94a3b8", marginBottom: "4px" }}>
+                      Email (Ixtiyoriy):
+                    </label>
+                    <input
+                      name="email"
+                      type="email"
+                      defaultValue={editingAccount?.email || ""}
+                      placeholder="user@example.com"
+                      style={{
+                        width: "100%",
+                        padding: "8px 10px",
+                        borderRadius: "6px",
+                        background: "#0f172a",
+                        border: "1px solid #334155",
+                        color: "#fff",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
                 </div>
 
                 {/* 5-Hour Inputs */}
@@ -1163,7 +1165,7 @@ export default function ExternalAiAccountsCard() {
                         type="number"
                         min="0"
                         max="100"
-                        defaultValue={editingAccount?.five_hour_percentage ?? 100}
+                        defaultValue={editingAccount?.five_hour_percentage ?? 0}
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1177,11 +1179,12 @@ export default function ExternalAiAccountsCard() {
                     </div>
                     <div style={{ flex: 1.5 }}>
                       <label style={{ display: "block", fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>
-                        Tiklanish vaqti (Reset time):
+                        Tiklanish matni:
                       </label>
                       <input
                         name="five_hour_reset"
-                        defaultValue={editingAccount?.five_hour_reset || "Resets at 7:11 PM"}
+                        defaultValue={editingAccount?.five_hour_reset || ""}
+                        placeholder="Masalan: Resets in 57 min yoki Resets at 7:11 PM"
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1198,12 +1201,12 @@ export default function ExternalAiAccountsCard() {
                   <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
                     <div style={{ flex: 1 }}>
                       <label style={{ display: "block", fontSize: "11px", color: "#94a3b8", marginBottom: "4px" }}>
-                        Aniq soat (24h yoki 12h, masalan: 19:11):
+                        Aniq soat yoki davr (masalan: 19:11 yoki in 57 min):
                       </label>
                       <input
                         name="five_hour_target_time"
-                        defaultValue={editingAccount?.five_hour_target_time || "19:11"}
-                        placeholder="19:11 yoki 7:11 PM"
+                        defaultValue={editingAccount?.five_hour_target_time || ""}
+                        placeholder="19:11 yoki in 57 min"
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1252,7 +1255,7 @@ export default function ExternalAiAccountsCard() {
                         type="number"
                         min="0"
                         max="100"
-                        defaultValue={editingAccount?.weekly_percentage ?? 75}
+                        defaultValue={editingAccount?.weekly_percentage ?? 100}
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1270,7 +1273,8 @@ export default function ExternalAiAccountsCard() {
                       </label>
                       <input
                         name="weekly_reset"
-                        defaultValue={editingAccount?.weekly_reset || "75% left • Active cycle"}
+                        defaultValue={editingAccount?.weekly_reset || ""}
+                        placeholder="Masalan: Resets Tue 10:00 AM yoki Active cycle"
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1296,7 +1300,7 @@ export default function ExternalAiAccountsCard() {
                   }}
                 >
                   <div style={{ fontSize: "12px", fontWeight: 700, color: "#60a5fa", marginBottom: "8px" }}>
-                    Cloud Session Credits ($):
+                    Cloud Session Credits ($) (Ixtiyoriy):
                   </div>
                   <div style={{ display: "flex", gap: "10px" }}>
                     <div style={{ flex: 1 }}>
@@ -1307,7 +1311,8 @@ export default function ExternalAiAccountsCard() {
                         name="cloud_credits_remaining"
                         type="number"
                         step="1"
-                        defaultValue={editingAccount?.cloud_credits_remaining ?? 98}
+                        defaultValue={editingAccount?.cloud_credits_remaining !== undefined ? editingAccount.cloud_credits_remaining : ""}
+                        placeholder="Masalan: 98"
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1327,7 +1332,8 @@ export default function ExternalAiAccountsCard() {
                         name="cloud_credits_total"
                         type="number"
                         step="1"
-                        defaultValue={editingAccount?.cloud_credits_total ?? 100}
+                        defaultValue={editingAccount?.cloud_credits_total !== undefined ? editingAccount.cloud_credits_total : ""}
+                        placeholder="Masalan: 100"
                         style={{
                           width: "100%",
                           padding: "8px 10px",
@@ -1345,7 +1351,8 @@ export default function ExternalAiAccountsCard() {
                       </label>
                       <input
                         name="cloud_credits_expiry"
-                        defaultValue={editingAccount?.cloud_credits_expiry || "Expires 12:59 PM GMT+5, Nov 5"}
+                        defaultValue={editingAccount?.cloud_credits_expiry || ""}
+                        placeholder="Masalan: Nov 5, 2026"
                         style={{
                           width: "100%",
                           padding: "8px 10px",
