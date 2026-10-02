@@ -5,8 +5,9 @@
  * Sanitized for public release: ZERO credentials, API keys, or personal emails.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../Icons";
 import type { ExternalAccountQuota } from "../../types";
 
@@ -221,6 +222,98 @@ export default function ExternalAiAccountsCard() {
   const [editingAccount, setEditingAccount] = useState<ExternalAccountQuota | null>(null);
   const [hoveredLimitId, setHoveredLimitId] = useState<string | null>(null);
 
+  const [isLiveSyncing, setIsLiveSyncing] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
+
+  // Live auto-fetch from local Claude Code and OpenAI Codex
+  const fetchLiveQuotas = useCallback(async () => {
+    try {
+      setIsLiveSyncing(true);
+      const res: any = await invoke("get_external_ai_quotas");
+      if (res) {
+        setAccounts((prev) => {
+          let updated = [...prev];
+
+          // 1. Live Claude from local OAuth session
+          if (res.claude) {
+            const c = res.claude;
+            const existingIdx = updated.findIndex((a) => a.provider === "claude" && (a.id.startsWith("claude-live") || (a.source && a.source.includes("OAuth"))));
+            const claudeItem: ExternalAccountQuota = {
+              id: existingIdx >= 0 ? updated[existingIdx].id : "claude-live-primary",
+              provider: "claude",
+              name: c.name || "Claude Pro (Claude Code / Opus 5.5)",
+              email: "Claude Code OAuth",
+              plan: c.plan || "Claude Pro",
+              model: c.model || "Opus 5.5 High / Sonnet 3.5",
+              percentage_mode: "used",
+              five_hour_percentage: c.five_hour_used_percent,
+              five_hour_reset: c.five_hour_reset_time,
+              five_hour_target_time: c.five_hour_target_time,
+              weekly_percentage: c.weekly_used_percent,
+              weekly_reset: c.weekly_reset_time,
+              cloud_credits_remaining: c.cloud_credits_remaining,
+              cloud_credits_total: c.cloud_credits_total,
+              cloud_credits_expiry: c.cloud_credits_expiry,
+              auto_recover: true,
+              last_calculated_at: Date.now(),
+              status: c.status as any,
+              source: "Live Anthropic OAuth",
+            };
+            if (existingIdx >= 0) {
+              updated[existingIdx] = claudeItem;
+            } else {
+              updated.unshift(claudeItem);
+            }
+          }
+
+          // 2. Live Codex from local Rollout Telemetry
+          if (res.codex) {
+            const x = res.codex;
+            const existingIdx = updated.findIndex((a) => a.provider === "chatgpt" && (a.id.startsWith("codex-live") || (a.source && a.source.includes("Rollout"))));
+            const codexItem: ExternalAccountQuota = {
+              id: existingIdx >= 0 ? updated[existingIdx].id : "codex-live-primary",
+              provider: "chatgpt",
+              name: x.name || "ChatGPT Plus (Codex Session)",
+              email: "OpenAI Codex CLI",
+              plan: x.plan || "ChatGPT Plus",
+              model: x.model || "GPT-5.5 / Codex Core",
+              percentage_mode: "used",
+              five_hour_percentage: x.five_hour_used_percent,
+              five_hour_reset: x.five_hour_reset_time,
+              five_hour_target_time: x.five_hour_target_time,
+              weekly_percentage: x.weekly_used_percent,
+              weekly_reset: x.weekly_reset_time,
+              auto_recover: true,
+              last_calculated_at: Date.now(),
+              status: x.status as any,
+              source: "Live OpenAI Rollout Log",
+            };
+            if (existingIdx >= 0) {
+              updated[existingIdx] = codexItem;
+            } else {
+              const insertIdx = updated.findIndex((a) => a.provider === "claude") >= 0 ? 1 : 0;
+              updated.splice(insertIdx, 0, codexItem);
+            }
+          }
+
+          return updated;
+        });
+        setLastSyncTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      }
+    } catch (err) {
+      console.warn("External AI Quotas fetch error (non-fatal):", err);
+    } finally {
+      setIsLiveSyncing(false);
+    }
+  }, []);
+
+  // Initial and recurring sync (every 60 seconds)
+  useEffect(() => {
+    fetchLiveQuotas();
+    const syncInterval = setInterval(fetchLiveQuotas, 60000);
+    return () => clearInterval(syncInterval);
+  }, [fetchLiveQuotas]);
+
   // Live rolling update interval: recalculate every 1 second for live countdown
   useEffect(() => {
     const timer = setInterval(() => {
@@ -413,7 +506,59 @@ export default function ExternalAiAccountsCard() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          {lastSyncTime && (
+            <span
+              style={{
+                fontSize: "11px",
+                color: "#10b981",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "5px",
+                background: "rgba(16, 185, 129, 0.1)",
+                padding: "4px 8px",
+                borderRadius: "6px",
+                border: "1px solid rgba(16, 185, 129, 0.25)",
+              }}
+              title="Lokal Claude Code va Codex dan oxirgi olingan jonli vaqt"
+            >
+              <span
+                style={{
+                  width: "6px",
+                  height: "6px",
+                  borderRadius: "50%",
+                  background: "#10b981",
+                  display: "inline-block",
+                  boxShadow: "0 0 6px #10b981",
+                }}
+              />
+              Live Telemetry: {lastSyncTime}
+            </span>
+          )}
+
+          <button
+            onClick={() => fetchLiveQuotas()}
+            disabled={isLiveSyncing}
+            title="Lokal Claude va Codex kvotalarini darhol qayta o'qish"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "6px 12px",
+              borderRadius: "6px",
+              background: "rgba(255, 255, 255, 0.05)",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+              color: isLiveSyncing ? "#f59e0b" : "#cbd5e1",
+              fontSize: "11px",
+              fontWeight: 500,
+              cursor: isLiveSyncing ? "wait" : "pointer",
+              transition: "all 0.2s",
+            }}
+          >
+            <Icon name="refresh" size={12} />
+            <span>{isLiveSyncing ? "Yangilanmoqda..." : "Jonli Sinxronlash"}</span>
+          </button>
+
           <button
             onClick={() => {
               setEditingAccount(null);
@@ -589,10 +734,26 @@ export default function ExternalAiAccountsCard() {
                     {isClaude ? "C" : "G"}
                   </div>
                   <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
                       <span style={{ fontSize: "13px", fontWeight: 700, color: "#fff", lineHeight: "1.2" }}>
                         {acc.name}
                       </span>
+                      {acc.source && (
+                        <span
+                          style={{
+                            fontSize: "9px",
+                            fontWeight: 700,
+                            padding: "1px 6px",
+                            borderRadius: "3px",
+                            background: "rgba(16, 185, 129, 0.2)",
+                            color: "#34d399",
+                            border: "1px solid rgba(16, 185, 129, 0.3)",
+                          }}
+                          title={`Manba: ${acc.source}`}
+                        >
+                          ⚡ {acc.source}
+                        </span>
+                      )}
                       {isPaused && (
                         <span
                           style={{
