@@ -11,13 +11,21 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../Icons";
 import type { ExternalAccountQuota } from "../../types";
 
-const STORAGE_KEY = "switcher_external_ai_accounts_v8";
+const STORAGE_KEY = "switcher_external_ai_accounts_v9";
 
 export const cleanLegacyAccounts = (accs: ExternalAccountQuota[]): ExternalAccountQuota[] => {
   return accs.filter((a) => {
     if (a.id === "claude-pro-backup" || a.id.includes("backup")) return false;
     if (a.name.includes("Pauzada") || a.name.includes("#2")) return false;
     return true;
+  }).map((a) => {
+    if (a.provider === "chatgpt") {
+      return {
+        ...a,
+        name: "ChatGPT Plus (Codex)",
+      };
+    }
+    return a;
   });
 };
 
@@ -281,7 +289,7 @@ export default function ExternalAiAccountsCard() {
             const codexItem: ExternalAccountQuota = {
               id: existingIdx >= 0 ? updated[existingIdx].id : "codex-live-primary",
               provider: "chatgpt",
-              name: x.name || "Keraksiz (ChatGPT Plus)",
+              name: x.name || "ChatGPT Plus (Codex)",
               email: "OpenAI Codex CLI",
               plan: x.plan || "ChatGPT Plus",
               model: x.model || "Codex / GPT-5",
