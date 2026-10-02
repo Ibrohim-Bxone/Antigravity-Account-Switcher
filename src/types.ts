@@ -125,6 +125,7 @@ export interface ExternalAccountQuota {
   total_messages?: number;
   reset_time?: string;
   status: "active" | "low" | "exhausted" | "paused";
+  source?: string;
 }
 
 export interface AppState {

@@ -5,6 +5,7 @@
  */
 pub mod commands;
 pub mod http;
+pub mod limits;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -230,7 +231,8 @@ pub fn run() {
             commands::remove_profile_lock,
             commands::close_app_lock,
             commands::open_browser_url,
-            commands::send_email_report
+            commands::send_email_report,
+            limits::get_external_ai_quotas
         ]);
 
     log_trace_lib("Calling builder.build(tauri::generate_context!())");
