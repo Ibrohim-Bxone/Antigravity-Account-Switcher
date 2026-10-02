@@ -34,15 +34,11 @@ impl SwitcherService {
             if let Ok(procs) = process_mgr.enumerate() {
                 for p in &procs {
                     let name = p.name.to_lowercase();
-                    // Active compilation, build, script or AI subagent runner processes
+                    // Active compilation, build, or heavy task runner processes
                     if matches!(
                         name.as_str(),
                         "cargo.exe"
                             | "rustc.exe"
-                            | "git.exe"
-                            | "python.exe"
-                            | "python3.exe"
-                            | "node.exe"
                             | "agy.exe"
                             | "docker.exe"
                             | "cl.exe"
@@ -125,16 +121,6 @@ impl SwitcherService {
             return Ok(());
         }
 
-        // PROCESS GUARDIAN: If any task, compiler, or subagent is active, defer switch!
-        if self.is_agent_working() {
-            self.logger.warn(
-                None,
-                "smart_switch",
-                "Automated switch DEFERRED: Background processes or subagents are actively working. Protecting current tasks.",
-            );
-            return Ok(());
-        }
-
         if self.journal().exists() {
             return Ok(());
         }
@@ -168,7 +154,21 @@ impl SwitcherService {
         let gemini_exhausted = rem_5h < 0.10 || rem_weekly < 0.05;
         let p3_exhausted = rem_3p_5h < 0.10 || rem_3p_weekly < 0.05;
 
+        // If active profile still has ample quota, do nothing
         if !gemini_exhausted && !p3_exhausted {
+            return Ok(());
+        }
+
+        // CRITICAL CHECK: If quota is completely exhausted (rem_5h < 0.03), we MUST switch immediately
+        // because the agent cannot execute any more prompt calls without failing.
+        // If there's still a tiny buffer (3% - 10%) AND heavy compilation/process is running, defer briefly.
+        let is_emergency = rem_5h < 0.03 || rem_weekly < 0.02;
+        if !is_emergency && self.is_agent_working() {
+            self.logger.warn(
+                None,
+                "smart_switch",
+                "Automated switch DEFERRED: Heavy compiler/task running while buffer quota remains.",
+            );
             return Ok(());
         }
 
@@ -184,8 +184,7 @@ impl SwitcherService {
             ),
         );
 
-        let mut candidate: Option<(Uuid, f64, f64)> = None;
-        let mut fallback_candidate: Option<Uuid> = None;
+        let mut candidate: Option<(Uuid, f64)> = None;
 
         for profile in &profiles {
             // Strictly skip active profile and profiles requiring re-authentication
@@ -197,45 +196,23 @@ impl SwitcherService {
             if let Some(ref q) = profile.quota {
                 let cand_5h = get_bucket_remaining_fraction(q, "gemini-5h").unwrap_or(0.0);
                 let cand_weekly = get_bucket_remaining_fraction(q, "gemini-weekly").unwrap_or(0.0);
-                let cand_3p_5h = get_bucket_remaining_fraction(q, "3p-5h").unwrap_or(0.0);
-                let cand_3p_weekly = get_bucket_remaining_fraction(q, "3p-weekly").unwrap_or(0.0);
 
-                let is_gemini_ok = cand_5h >= 0.15 && cand_weekly >= 0.08;
-                let is_3p_ok = cand_3p_5h >= 0.15 && cand_3p_weekly >= 0.08;
-
-                if is_gemini_ok && is_3p_ok {
-                    if let Some((_, best_5h, _)) = candidate {
+                // Candidate must have healthy Gemini quota (> 15% 5h and > 5% weekly)
+                if cand_5h >= 0.15 && cand_weekly >= 0.05 {
+                    if let Some((_, best_5h)) = candidate {
                         if cand_5h > best_5h {
-                            candidate = Some((profile.metadata.profile_id, cand_5h, cand_weekly));
+                            candidate = Some((profile.metadata.profile_id, cand_5h));
                         }
                     } else {
-                        candidate = Some((profile.metadata.profile_id, cand_5h, cand_weekly));
-                    }
-                } else if (cand_5h > rem_5h || cand_3p_5h > rem_3p_5h)
-                    && cand_5h >= 0.15
-                    && cand_weekly >= 0.05
-                    && cand_3p_weekly >= 0.05
-                {
-                    if fallback_candidate.is_none() {
-                        fallback_candidate = Some(profile.metadata.profile_id);
+                        candidate = Some((profile.metadata.profile_id, cand_5h));
                     }
                 }
             }
         }
 
-        let target_id = candidate.map(|(id, _, _)| id).or(fallback_candidate);
+        let target_id = candidate.map(|(id, _)| id);
 
         if let Some(target_id) = target_id {
-            // Final check right before switch: ensure no tasks started in the meantime
-            if self.is_agent_working() {
-                self.logger.warn(
-                    None,
-                    "smart_switch",
-                    "Switch aborted at final step: Tasks started right before switch. Waiting.",
-                );
-                return Ok(());
-            }
-
             self.logger.warn(
                 None,
                 "smart_switch",
