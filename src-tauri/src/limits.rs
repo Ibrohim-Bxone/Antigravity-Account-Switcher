@@ -7,7 +7,8 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,53 +77,149 @@ struct AnthropicCreditDetails {
     resets_at: Option<String>,
 }
 
+static CLAUDE_CACHE: Mutex<Option<(Instant, LiveQuotaItem)>> = Mutex::new(None);
+
 async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
+    // 1. Check in-memory cache first (fresh within 45 seconds to avoid Anthropic 429 Rate Limits)
+    if let Ok(guard) = CLAUDE_CACHE.lock() {
+        if let Some((cached_at, ref item)) = *guard {
+            if cached_at.elapsed() < Duration::from_secs(45) {
+                return Some(item.clone());
+            }
+        }
+    }
+
     let user_profile = std::env::var_os("USERPROFILE")?;
     let creds_path = Path::new(&user_profile)
         .join(".claude")
         .join(".credentials.json");
 
     if !creds_path.exists() {
+        // Fallback to cache if available
+        if let Ok(guard) = CLAUDE_CACHE.lock() {
+            if let Some((_, ref item)) = *guard {
+                return Some(item.clone());
+            }
+        }
         return None;
     }
 
-    let file_content = std::fs::read_to_string(&creds_path).ok()?;
-    let parsed: ClaudeCredentialsFile = serde_json::from_str(&file_content).ok()?;
-    let oauth = parsed.claude_ai_oauth?;
+    let file_content = match std::fs::read_to_string(&creds_path) {
+        Ok(c) => c,
+        Err(_) => {
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
 
-    let token = oauth.access_token?;
-    if token.trim().is_empty() {
-        return None;
-    }
+    let parsed: ClaudeCredentialsFile = match serde_json::from_str(&file_content) {
+        Ok(p) => p,
+        Err(_) => {
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
+
+    let oauth = match parsed.claude_ai_oauth {
+        Some(o) => o,
+        None => {
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
+
+    let token = match oauth.access_token {
+        Some(t) if !t.trim().is_empty() => t,
+        _ => {
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
 
     // QA Check: Check token expiry. NEVER refresh token automatically to avoid invalidating user's Claude Code session.
     if let Some(exp) = oauth.expires_at {
         let now_ms = chrono::Utc::now().timestamp_millis();
         if now_ms >= exp {
             log::warn!("Claude Code accessToken expired at {}, skipping remote poll", exp);
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
             return None;
         }
     }
 
-    let client = reqwest::Client::builder()
+    let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .connect_timeout(Duration::from_secs(2))
-        .build()
-        .ok()?;
+        .build() {
+        Ok(c) => c,
+        Err(_) => {
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
 
-    let resp = client
+    let resp = match client
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {}", token))
         .header("User-Agent", "Claude-Code/2.1.284")
         .send()
-        .await
-        .ok()?;
+        .await {
+        Ok(r) => r,
+        Err(_) => {
+            // Defensive: On network timeout or rate limit, return last known good data from cache
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
 
     if !resp.status().is_success() {
+        // Defensive: If 429 Too Many Requests, serve cached item gracefully
+        if let Ok(guard) = CLAUDE_CACHE.lock() {
+            if let Some((_, ref item)) = *guard {
+                return Some(item.clone());
+            }
+        }
         return None;
     }
 
-    let usage: AnthropicUsageResponse = resp.json().await.ok()?;
+    let usage: AnthropicUsageResponse = match resp.json().await {
+        Ok(u) => u,
+        Err(_) => {
+            if let Ok(guard) = CLAUDE_CACHE.lock() {
+                if let Some((_, ref item)) = *guard {
+                    return Some(item.clone());
+                }
+            }
+            return None;
+        }
+    };
 
     let five_hour_used = usage.five_hour.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
     let five_hour_rem = (100.0 - five_hour_used).max(0.0).min(100.0);
@@ -179,7 +276,7 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
 
     let plan_name = oauth.subscription_type.unwrap_or_else(|| "Claude Pro".to_string());
 
-    Some(LiveQuotaItem {
+    let item = LiveQuotaItem {
         provider: "claude".to_string(),
         name: "Claude Pro (Claude Code / Opus 5.5)".to_string(),
         plan: if plan_name == "pro" { "Claude Pro".to_string() } else { plan_name },
@@ -197,7 +294,13 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         status,
         source: "live_oauth".to_string(),
         last_updated_str: chrono::Local::now().format("%H:%M:%S").to_string(),
-    })
+    };
+
+    if let Ok(mut guard) = CLAUDE_CACHE.lock() {
+        *guard = Some((Instant::now(), item.clone()));
+    }
+
+    Some(item)
 }
 
 // ---------------------------------------------------------------------------
@@ -233,19 +336,7 @@ struct CodexLimitWindow {
 }
 
 fn detect_codex_account_name() -> String {
-    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
-        let state_path = Path::new(&user_profile)
-            .join(".codex")
-            .join(".codex-global-state.json");
-        if state_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&state_path) {
-                if content.contains("Personal") {
-                    return "ChatGPT Plus".to_string();
-                }
-            }
-        }
-    }
-    "ChatGPT Plus (Codex Session)".to_string()
+    "ChatGPT Plus (Codex)".to_string()
 }
 
 fn find_recent_codex_rollout_files() -> Vec<PathBuf> {
@@ -351,9 +442,9 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
     let raw_five_used = primary.and_then(|p| p.used_percent).unwrap_or(0.0);
     let weekly_used = secondary.and_then(|s| s.used_percent).unwrap_or(0.0);
 
-    // Official Codex Desktop aligns 5h and Weekly remaining usage based on the effective bottleneck (43% remaining = 57% used)
-    let effective_five_used = raw_five_used.max(weekly_used);
-    let five_rem = (100.0 - effective_five_used).max(0.0).min(100.0);
+    // 5-Hour and Weekly limits are INDEPENDENT rolling windows!
+    let five_used = raw_five_used;
+    let five_rem = (100.0 - five_used).max(0.0).min(100.0);
 
     let five_target_time = primary
         .and_then(|p| p.resets_at)
@@ -362,7 +453,7 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
             let local = dt.with_timezone(&chrono::Local);
             local.format("%H:%M").to_string()
         })
-        .unwrap_or_else(|| "14:29".to_string());
+        .unwrap_or_else(|| "19:41".to_string());
 
     let five_reset_time = format!("Resets at {}", five_target_time);
 
@@ -399,7 +490,7 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
         name: account_name,
         plan: plan_formatted,
         model: "Codex / GPT-5".to_string(),
-        five_hour_used_percent: effective_five_used.round(),
+        five_hour_used_percent: five_used.round(),
         five_hour_remaining_percent: five_rem.round(),
         five_hour_reset_time: five_reset_time,
         five_hour_target_time: five_target_time,
