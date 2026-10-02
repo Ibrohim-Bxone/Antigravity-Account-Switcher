@@ -11,7 +11,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { Icon } from "../Icons";
 import type { ExternalAccountQuota } from "../../types";
 
-const STORAGE_KEY = "switcher_external_ai_accounts_v7";
+const STORAGE_KEY = "switcher_external_ai_accounts_v8";
+
+export const cleanLegacyAccounts = (accs: ExternalAccountQuota[]): ExternalAccountQuota[] => {
+  return accs.filter((a) => {
+    if (a.id === "claude-pro-backup" || a.id.includes("backup")) return false;
+    if (a.name.includes("Pauzada") || a.name.includes("#2")) return false;
+    return true;
+  });
+};
 
 export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [];
 
@@ -208,7 +216,7 @@ export default function ExternalAiAccountsCard() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return cleanLegacyAccounts(parsed);
         }
       }
     } catch {
@@ -232,7 +240,7 @@ export default function ExternalAiAccountsCard() {
       const res: any = await invoke("get_external_ai_quotas");
       if (res) {
         setAccounts((prev) => {
-          let updated = [...prev];
+          let updated = cleanLegacyAccounts([...prev]);
 
           // 1. Live Claude from local OAuth session
           if (res.claude) {
@@ -273,10 +281,10 @@ export default function ExternalAiAccountsCard() {
             const codexItem: ExternalAccountQuota = {
               id: existingIdx >= 0 ? updated[existingIdx].id : "codex-live-primary",
               provider: "chatgpt",
-              name: x.name || "ChatGPT Plus (Codex Session)",
+              name: x.name || "ChatGPT Plus",
               email: "OpenAI Codex CLI",
               plan: x.plan || "ChatGPT Plus",
-              model: x.model || "GPT-5.5 / Codex Core",
+              model: x.model || "Codex / GPT-5",
               percentage_mode: "used",
               five_hour_percentage: x.five_hour_used_percent,
               five_hour_reset: x.five_hour_reset_time,
@@ -296,7 +304,7 @@ export default function ExternalAiAccountsCard() {
             }
           }
 
-          return updated;
+          return cleanLegacyAccounts(updated);
         });
         setLastSyncTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
       }
@@ -782,25 +790,43 @@ export default function ExternalAiAccountsCard() {
                   </div>
                 </div>
 
-                <button
-                  onClick={() => {
-                    setEditingAccount(acc);
-                    setEditModalOpen(true);
-                  }}
-                  style={{
-                    background: "rgba(255, 255, 255, 0.05)",
-                    border: "1px solid rgba(255, 255, 255, 0.1)",
-                    color: "var(--text-muted, #94a3b8)",
-                    cursor: "pointer",
-                    padding: "4px 6px",
-                    borderRadius: "4px",
-                    display: "flex",
-                    alignItems: "center",
-                  }}
-                  title="Tahrirlash"
-                >
-                  <Icon name="settings" size={13} />
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <button
+                    onClick={() => {
+                      setEditingAccount(acc);
+                      setEditModalOpen(true);
+                    }}
+                    style={{
+                      background: "rgba(255, 255, 255, 0.05)",
+                      border: "1px solid rgba(255, 255, 255, 0.1)",
+                      color: "var(--text-muted, #94a3b8)",
+                      cursor: "pointer",
+                      padding: "4px 6px",
+                      borderRadius: "4px",
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                    title="Tahrirlash"
+                  >
+                    <Icon name="settings" size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteAccount(acc.id)}
+                    style={{
+                      background: "rgba(239, 68, 68, 0.08)",
+                      border: "1px solid rgba(239, 68, 68, 0.2)",
+                      color: "#f87171",
+                      cursor: "pointer",
+                      padding: "4px 6px",
+                      borderRadius: "4px",
+                      display: "flex",
+                      alignItems: "center",
+                    }}
+                    title="Hisobni o'chirish"
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
+                </div>
               </div>
 
               {/* 5-Hour Limit Row with Tooltip Hover and Dynamic Fresh Display */}
