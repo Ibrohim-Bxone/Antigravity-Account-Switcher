@@ -292,13 +292,34 @@ pub fn check_single_instance() {
         if handle != ptr::null_mut() {
             let err = GetLastError();
             if err == ERROR_ALREADY_EXISTS {
+                let mut ports = vec![48731];
+                if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+                    let config_file = std::path::Path::new(&user_profile)
+                        .join("AppData")
+                        .join("Local")
+                        .join("AntigravitySwitcher")
+                        .join("config.json");
+                    if let Ok(content) = std::fs::read_to_string(config_file) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                            if let Some(p) = json.get("httpPort").and_then(|p| p.as_u64()) {
+                                let p16 = p as u16;
+                                if !ports.contains(&p16) {
+                                    ports.insert(0, p16);
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // 1. Try to wake the running instance via local HTTP server
-                if let Ok(addr) = "127.0.0.1:48731".parse::<SocketAddr>() {
-                    if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
-                        let req = "POST /api/v1/app/show HTTP/1.1\r\nHost: 127.0.0.1:48731\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-                        let _ = stream.write_all(req.as_bytes());
-                        let _ = stream.flush();
-                        std::process::exit(0);
+                for port in ports {
+                    if let Ok(addr) = format!("127.0.0.1:{}", port).parse::<SocketAddr>() {
+                        if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+                            let req = format!("POST /api/v1/app/show HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n", port);
+                            let _ = stream.write_all(req.as_bytes());
+                            let _ = stream.flush();
+                            std::process::exit(0);
+                        }
                     }
                 }
 
@@ -434,6 +455,24 @@ pub fn enable_window_resize(hwnd_val: isize) {
     }
 }
 
+#[cfg(windows)]
+pub fn force_window_foreground(hwnd_val: isize) {
+    if hwnd_val == 0 {
+        return;
+    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+    };
+    unsafe {
+        ShowWindow(hwnd_val as _, SW_RESTORE);
+        ShowWindow(hwnd_val as _, SW_SHOW);
+        SetForegroundWindow(hwnd_val as _);
+    }
+}
+
 #[cfg(not(windows))]
 pub fn enable_window_resize(_hwnd_val: isize) {}
+
+#[cfg(not(windows))]
+pub fn force_window_foreground(_hwnd_val: isize) {}
 

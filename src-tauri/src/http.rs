@@ -97,7 +97,17 @@ fn handle_client(
         if let Some(window) = app_handle.get_webview_window("main") {
             let _ = window.show();
             let _ = window.unminimize();
+            let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
+            let _ = window.center();
+            let _ = window.set_always_on_top(true);
             let _ = window.set_focus();
+            let _ = window.set_always_on_top(false);
+            #[cfg(target_os = "windows")]
+            {
+                if let Ok(hwnd) = window.hwnd() {
+                    switcher_windows::force_window_foreground(hwnd.0 as isize);
+                }
+            }
         }
         send_response(&mut stream, 200, "OK", r#"{"success":true}"#)?;
     } else if method == "POST" && path == "/api/v1/unlock" {

@@ -137,7 +137,12 @@ pub fn run() {
                     "show" => {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
+                            let _ = window.center();
+                            let _ = window.set_always_on_top(true);
                             let _ = window.set_focus();
+                            let _ = window.set_always_on_top(false);
                         }
                     }
                     _ => {}
@@ -152,7 +157,12 @@ pub fn run() {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
+                            let _ = window.unminimize();
+                            let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
+                            let _ = window.center();
+                            let _ = window.set_always_on_top(true);
                             let _ = window.set_focus();
+                            let _ = window.set_always_on_top(false);
                         }
                     }
                 })
@@ -161,11 +171,16 @@ pub fn run() {
             if let Some(main_win) = app.get_webview_window("main") {
                 let _ = main_win.show();
                 let _ = main_win.unminimize();
+                let _ = main_win.set_size(tauri::LogicalSize::new(800.0, 600.0));
+                let _ = main_win.center();
+                let _ = main_win.set_always_on_top(true);
                 let _ = main_win.set_focus();
+                let _ = main_win.set_always_on_top(false);
                 #[cfg(target_os = "windows")]
                 {
                     if let Ok(hwnd) = main_win.hwnd() {
                         switcher_windows::enable_window_resize(hwnd.0 as isize);
+                        switcher_windows::force_window_foreground(hwnd.0 as isize);
                     }
                 }
             }
