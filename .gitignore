@@ -56,3 +56,6 @@ client_secret*.json
 service-account*.json
 gcp-credentials*.json
 firebase-adminsdk*.json
+
+# agy conveyor artefacts
+.agy/

@@ -122,12 +122,36 @@ mod tests {
 
     #[test]
     fn test_client_id_domain() {
-        let reversed_client_id =
-            "moc.tnetnocresuelgoog.sppa.pe304g4hjolotv532ercl12h2nisshmt-1950606001701";
-        let client_id: String = reversed_client_id.chars().rev().collect();
+        use crate::oauth_client::{resolve_client_id, DEFAULT_CLIENT_ID};
         assert_eq!(
-            client_id,
+            DEFAULT_CLIENT_ID,
             "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+        );
+        assert_eq!(
+            resolve_client_id(None),
+            "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+        );
+        assert_eq!(
+            resolve_client_id(Some("custom-id".to_string())),
+            "custom-id"
+        );
+    }
+
+    #[test]
+    fn test_oauth_secret_resolution() {
+        use crate::oauth_client::resolve_secret;
+        assert!(resolve_secret(None).is_err());
+        assert_eq!(
+            resolve_secret(None).unwrap_err(),
+            "ANTIGRAVITY_OAUTH_CLIENT_SECRET is not set. See README > OAuth configuration."
+        );
+        assert_eq!(
+            resolve_secret(Some("   ".to_string())).unwrap_err(),
+            "ANTIGRAVITY_OAUTH_CLIENT_SECRET is not set. See README > OAuth configuration."
+        );
+        assert_eq!(
+            resolve_secret(Some("custom-secret".to_string())),
+            Ok("custom-secret".to_string())
         );
     }
 

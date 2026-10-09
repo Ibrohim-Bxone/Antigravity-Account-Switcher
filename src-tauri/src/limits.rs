@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveQuotaItem {
     pub provider: String,          // "claude" | "chatgpt"
-    pub name: String,              // e.g. "Claude Pro (Claude Code OAuth)" | "ChatGPT Plus (Codex Session)"
-    pub plan: String,              // "Claude Pro" | "ChatGPT Plus"
-    pub model: String,             // "Claude 3.5 Sonnet / Opus" | "Codex / GPT-5"
+    pub name: String,              // e.g. "<Plan> (Claude Code)" | "<Plan> (Codex)"
+    pub plan: String,              // e.g. "Claude Pro" | "ChatGPT Plus"
+    pub model: String,             // Model name if available, otherwise empty
     pub five_hour_used_percent: f64,
     pub five_hour_remaining_percent: f64,
     pub five_hour_reset_time: String,
@@ -36,6 +36,40 @@ pub struct LiveQuotaItem {
 pub struct ExternalAiQuotasResponse {
     pub claude: Option<LiveQuotaItem>,
     pub codex: Option<LiveQuotaItem>,
+}
+
+pub fn format_claude_plan(subscription_type: Option<&str>) -> String {
+    match subscription_type {
+        Some("pro") => "Claude Pro".to_string(),
+        Some("max") => "Claude Max".to_string(),
+        Some("team") => "Claude Team".to_string(),
+        Some("enterprise") => "Claude Enterprise".to_string(),
+        Some("free") => "Claude Free".to_string(),
+        Some(s) if !s.trim().is_empty() => {
+            let trimmed = s.trim();
+            let mut chars = trimmed.chars();
+            let capitalized = match chars.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+                None => String::new(),
+            };
+            format!("Claude {}", capitalized)
+        }
+        _ => "Claude".to_string(),
+    }
+}
+
+pub fn format_codex_plan(plan_type: Option<&str>) -> String {
+    match plan_type {
+        Some("plus") => "ChatGPT Plus".to_string(),
+        Some("pro") => "ChatGPT Pro".to_string(),
+        Some("team") => "ChatGPT Team".to_string(),
+        Some("business") => "ChatGPT Business".to_string(),
+        Some("enterprise") => "ChatGPT Enterprise".to_string(),
+        Some("edu") => "ChatGPT Edu".to_string(),
+        Some("free") => "ChatGPT Free".to_string(),
+        Some(s) if !s.trim().is_empty() => format!("ChatGPT {}", s.trim()),
+        _ => "ChatGPT".to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -274,13 +308,14 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         "active".to_string()
     };
 
-    let plan_name = oauth.subscription_type.unwrap_or_else(|| "Claude Pro".to_string());
+    let plan = format_claude_plan(oauth.subscription_type.as_deref());
+    let name = format!("{} (Claude Code)", plan);
 
     let item = LiveQuotaItem {
         provider: "claude".to_string(),
-        name: "Claude Pro (Claude Code / Opus 5.5)".to_string(),
-        plan: if plan_name == "pro" { "Claude Pro".to_string() } else { plan_name },
-        model: "Opus 5.5 High / Sonnet 3.5".to_string(),
+        name,
+        plan,
+        model: String::new(),
         five_hour_used_percent: five_hour_used.round(),
         five_hour_remaining_percent: five_hour_rem.round(),
         five_hour_reset_time,
@@ -333,10 +368,6 @@ struct CodexRateLimitsOuter {
 struct CodexLimitWindow {
     used_percent: Option<f64>,
     resets_at: Option<i64>,
-}
-
-fn detect_codex_account_name() -> String {
-    "ChatGPT Plus (Codex)".to_string()
 }
 
 fn find_recent_codex_rollout_files() -> Vec<PathBuf> {
@@ -468,12 +499,8 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
         })
         .unwrap_or_else(|| "Active cycle".to_string());
 
-    let plan = rate_limits.plan_type.unwrap_or_else(|| "ChatGPT Plus".to_string());
-    let plan_formatted = if plan == "plus" {
-        "ChatGPT Plus".to_string()
-    } else {
-        plan
-    };
+    let plan = format_codex_plan(rate_limits.plan_type.as_deref());
+    let name = format!("{} (Codex)", plan);
 
     let status = if five_rem <= 0.0 || weekly_rem <= 0.0 {
         "exhausted".to_string()
@@ -483,13 +510,11 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
         "active".to_string()
     };
 
-    let account_name = detect_codex_account_name();
-
     Some(LiveQuotaItem {
         provider: "chatgpt".to_string(),
-        name: account_name,
-        plan: plan_formatted,
-        model: "Codex / GPT-5".to_string(),
+        name,
+        plan,
+        model: String::new(),
         five_hour_used_percent: five_used.round(),
         five_hour_remaining_percent: five_rem.round(),
         five_hour_reset_time: five_reset_time,
@@ -524,3 +549,38 @@ pub async fn get_external_ai_quotas() -> Result<ExternalAiQuotasResponse, String
         codex: codex_res,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_claude_plan() {
+        assert_eq!(format_claude_plan(Some("pro")), "Claude Pro");
+        assert_eq!(format_claude_plan(Some("max")), "Claude Max");
+        assert_eq!(format_claude_plan(Some("team")), "Claude Team");
+        assert_eq!(format_claude_plan(Some("enterprise")), "Claude Enterprise");
+        assert_eq!(format_claude_plan(Some("free")), "Claude Free");
+        assert_eq!(format_claude_plan(Some("custom")), "Claude Custom");
+        assert_eq!(format_claude_plan(Some("CustomTier")), "Claude CustomTier");
+        assert_eq!(format_claude_plan(None), "Claude");
+        assert_eq!(format_claude_plan(Some("")), "Claude");
+        assert_eq!(format_claude_plan(Some("   ")), "Claude");
+    }
+
+    #[test]
+    fn test_format_codex_plan() {
+        assert_eq!(format_codex_plan(Some("plus")), "ChatGPT Plus");
+        assert_eq!(format_codex_plan(Some("pro")), "ChatGPT Pro");
+        assert_eq!(format_codex_plan(Some("team")), "ChatGPT Team");
+        assert_eq!(format_codex_plan(Some("business")), "ChatGPT Business");
+        assert_eq!(format_codex_plan(Some("enterprise")), "ChatGPT Enterprise");
+        assert_eq!(format_codex_plan(Some("edu")), "ChatGPT Edu");
+        assert_eq!(format_codex_plan(Some("free")), "ChatGPT Free");
+        assert_eq!(format_codex_plan(Some("custom")), "ChatGPT custom");
+        assert_eq!(format_codex_plan(None), "ChatGPT");
+        assert_eq!(format_codex_plan(Some("")), "ChatGPT");
+        assert_eq!(format_codex_plan(Some("   ")), "ChatGPT");
+    }
+}
+

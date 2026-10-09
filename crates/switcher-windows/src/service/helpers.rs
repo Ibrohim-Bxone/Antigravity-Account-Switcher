@@ -263,6 +263,8 @@ pub(crate) fn normalize_antigravity_credential(bytes: &[u8]) -> std::result::Res
         .ok_or_else(|| "No refresh_token found in credential".to_string())?
         .to_string();
 
+    let (client_id, client_secret) = crate::oauth_client::oauth_client_credentials()?;
+
     let existing_id_token = val.get("id_token").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -273,13 +275,10 @@ pub(crate) fn normalize_antigravity_credential(bytes: &[u8]) -> std::result::Res
 
     rt_handle.spawn(async move {
         let client = reqwest::Client::new();
-        let rev_client_id = "moc.tnetnocresuelgoog.sppa.pe304g4hjolotv532ercl12h2nisshmt-1950606001701";
-        let client_id: String = rev_client_id.chars().rev().collect();
-        let client_secret = "REDACTED_OAUTH_CLIENT_SECRET";
 
         let params = [
             ("client_id", client_id.as_str()),
-            ("client_secret", client_secret),
+            ("client_secret", client_secret.as_str()),
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token.as_str()),
         ];

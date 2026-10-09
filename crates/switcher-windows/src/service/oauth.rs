@@ -71,9 +71,8 @@ impl SwitcherService {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         *self.active_oauth_cancellation.lock() = Some(tx);
 
-        let reversed_client_id =
-            "moc.tnetnocresuelgoog.sppa.pe304g4hjolotv532ercl12h2nisshmt-1950606001701";
-        let client_id: String = reversed_client_id.chars().rev().collect();
+        let (client_id, client_secret) = crate::oauth_client::oauth_client_credentials()
+            .map_err(SwitcherError::Message)?;
         let state = Uuid::new_v4().simple().to_string();
         let scopes = vec![
             "https://www.googleapis.com/auth/cloud-platform",
@@ -149,8 +148,6 @@ impl SwitcherService {
             "Initiating token exchange POST request to accounts.google.com...",
         );
         let client = reqwest::Client::new();
-
-        let client_secret = "REDACTED_OAUTH_CLIENT_SECRET".to_string();
 
         let params = [
             ("client_id", client_id.as_str()),

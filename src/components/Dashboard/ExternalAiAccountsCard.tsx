@@ -14,20 +14,9 @@ import type { ExternalAccountQuota } from "../../types";
 const STORAGE_KEY = "switcher_external_ai_accounts_v9";
 
 export const cleanLegacyAccounts = (accs: ExternalAccountQuota[]): ExternalAccountQuota[] => {
-  return accs.filter((a) => {
-    if (a.id === "claude-pro-backup" || a.id.includes("backup")) return false;
-    if (a.name.includes("Pauzada") || a.name.includes("#2")) return false;
-    return true;
-  }).map((a) => {
-    if (a.provider === "chatgpt") {
-      return {
-        ...a,
-        name: "ChatGPT Plus (Codex)",
-      };
-    }
-    return a;
-  });
+  return accs.filter((a) => a.id !== "claude-pro-backup");
 };
+
 
 export const DEFAULT_ACCOUNTS: ExternalAccountQuota[] = [];
 
@@ -257,10 +246,10 @@ export default function ExternalAiAccountsCard() {
             const claudeItem: ExternalAccountQuota = {
               id: existingIdx >= 0 ? updated[existingIdx].id : "claude-live-primary",
               provider: "claude",
-              name: c.name || "Claude Pro (Claude Code / Opus 5.5)",
+              name: c.name || "Claude",
               email: "Claude Code OAuth",
-              plan: c.plan || "Claude Pro",
-              model: c.model || "Opus 5.5 High / Sonnet 3.5",
+              plan: c.plan || "Claude",
+              model: c.model || "",
               percentage_mode: "used",
               five_hour_percentage: c.five_hour_used_percent,
               five_hour_reset: c.five_hour_reset_time,
@@ -289,10 +278,10 @@ export default function ExternalAiAccountsCard() {
             const codexItem: ExternalAccountQuota = {
               id: existingIdx >= 0 ? updated[existingIdx].id : "codex-live-primary",
               provider: "chatgpt",
-              name: x.name || "ChatGPT Plus (Codex)",
+              name: x.name || "ChatGPT",
               email: "OpenAI Codex CLI",
-              plan: x.plan || "ChatGPT Plus",
-              model: x.model || "Codex / GPT-5",
+              plan: x.plan || "ChatGPT",
+              model: x.model || "",
               percentage_mode: "used",
               five_hour_percentage: x.five_hour_used_percent,
               five_hour_reset: x.five_hour_reset_time,
@@ -353,8 +342,8 @@ export default function ExternalAiAccountsCard() {
     const formData = new FormData(form);
     const id = editingAccount ? editingAccount.id : `ext-${Date.now()}`;
     const provider = (formData.get("provider") as "claude" | "chatgpt") || editingAccount?.provider || "claude";
-    const name = (formData.get("name") as string)?.trim() || editingAccount?.name || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
-    const plan = (formData.get("plan") as string)?.trim() || editingAccount?.plan || (provider === "claude" ? "Claude Pro" : "ChatGPT Plus");
+    const name = (formData.get("name") as string)?.trim() || editingAccount?.name || (provider === "claude" ? "Claude" : "ChatGPT");
+    const plan = (formData.get("plan") as string)?.trim() || editingAccount?.plan || (provider === "claude" ? "Claude" : "ChatGPT");
     const model = (formData.get("model") as string)?.trim() || editingAccount?.model || "";
     const email = (formData.get("email") as string)?.trim() || editingAccount?.email || "";
     const context_window = (formData.get("context_window") as string)?.trim() || editingAccount?.context_window || "";
@@ -636,7 +625,7 @@ export default function ExternalAiAccountsCard() {
               Hech qanday tashqi AI hisobi ulanmagan
             </h4>
             <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted, #94a3b8)", lineHeight: "1.6" }}>
-              Claude Pro va ChatGPT Plus hisoblaringizning 5-soatlik va haftalik limitlari, rolling-reset vaqtlarini real vaqtda kuzatish uchun o'z hisobingizni qo'shing. Barcha ma'lumotlar faqat sizning qurilmangizdagi mahalliy brauzer xotirasida (localStorage) saqlanadi.
+              Claude va ChatGPT hisoblaringizning (istalgan tarif: Pro, Max, Plus, Team) 5-soatlik va haftalik limitlari, rolling-reset vaqtlarini real vaqtda kuzatish uchun o'z hisobingizni qo'shing. Barcha ma'lumotlar faqat sizning qurilmangizdagi mahalliy brauzer xotirasida (localStorage) saqlanadi.
             </p>
           </div>
           <button
@@ -793,7 +782,7 @@ export default function ExternalAiAccountsCard() {
                         marginTop: "2px",
                       }}
                     >
-                      {acc.plan} {acc.model ? `• ${acc.model}` : ""}
+                      {acc.plan}{acc.model && acc.model.trim() ? ` • ${acc.model.trim()}` : ""}
                     </div>
                   </div>
                 </div>
@@ -1303,7 +1292,7 @@ export default function ExternalAiAccountsCard() {
                     <input
                       name="model"
                       defaultValue={editingAccount?.model || ""}
-                      placeholder="Masalan: Opus 5.5 High yoki GPT-4o"
+                      placeholder="Masalan: Claude 3.7 Sonnet yoki GPT-4o"
                       style={{
                         width: "100%",
                         padding: "8px 10px",

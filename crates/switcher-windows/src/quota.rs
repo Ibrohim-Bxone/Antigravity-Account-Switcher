@@ -11,13 +11,8 @@ impl QuotaDecryptor {
     pub async fn fetch_live_quota(
         refresh_token: &str,
     ) -> std::result::Result<ProfileQuotaView, String> {
+        let (client_id, client_secret) = crate::oauth_client::oauth_client_credentials()?;
         let client = reqwest::Client::new();
-
-        let rev_client_id =
-            "moc.tnetnocresuelgoog.sppa.pe304g4hjolotv532ercl12h2nisshmt-1950606001701";
-        let client_id: String = rev_client_id.chars().rev().collect();
-
-        let client_secret = "REDACTED_OAUTH_CLIENT_SECRET".to_string();
 
         let params = [
             ("client_id", client_id.as_str()),

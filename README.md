@@ -1,6 +1,6 @@
 # Antigravity Account Switcher Pro ⚡
 
-> **A secure, high-performance Windows desktop application built with Tauri 2.x and Rust to seamlessly manage, auto-switch, and monitor quotas across multiple Google Antigravity 2.0, Claude Pro, and ChatGPT Plus accounts.**
+> **A secure, high-performance Windows desktop application built with Tauri 2.x and Rust to seamlessly manage, auto-switch, and monitor quotas across multiple Google Antigravity 2.0, Claude and ChatGPT accounts (any plan).**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#development)
@@ -12,7 +12,7 @@
 
 ## 🇺🇿 O'zbekcha Tavsif (Summary in Uzbek)
 
-**Antigravity Account Switcher** — Google Antigravity 2.0 (Gemini Pro), Claude Pro (Cursor / Opus 5.5) va ChatGPT Plus (Codex / GPT-4o) hisoblaridagi limitlar, 5-soatlik va haftalik kvotalarni avtomatik nazorat qiluvchi va uzluksiz almashtirib beruvchi professional Windows desktop ilovasi.
+**Antigravity Account Switcher** — Google Antigravity 2.0 (Gemini Pro), Claude (Claude Code) va ChatGPT (Codex) hisoblaridagi (istalgan tarif: Pro, Max, Plus, Team) limitlar, 5-soatlik va haftalik kvotalarni avtomatik nazorat qiluvchi va uzluksiz almashtirib beruvchi professional Windows desktop ilovasi.
 
 ### 🔥 Asosiy Imkoniyatlar:
 1. **Process Guardian Shield (Jarayonlar Himoyachisi):**
@@ -38,7 +38,7 @@
 *   **Process Guardian**: Monitors Antigravity process trees, subagents, and background terminal workers (`powershell`, `cargo`, `git`, `python`, `node`). Prevents abrupt shutdowns or switches while computational jobs are in progress.
 *   **Token Health Pre-Flight**: Live-validates OAuth tokens prior to activating an account. Skips accounts flagged for security challenges or requiring browser re-verification.
 *   **Session & Context Continuity**: Preserves workspace databases and `.gemini/antigravity/brain` transcripts so ongoing AI reasoning sessions seamlessly resume without context loss.
-*   **Dual-Quota & External AI Monitoring**: Real-time 5-hour rolling recovery windows, weekly allocations, and cloud session credits for Claude Pro (Opus 5.5) and ChatGPT Plus (Codex / GPT-4o).
+*   **Dual-Quota & External AI Monitoring**: Real-time 5-hour rolling recovery windows, weekly allocations, and cloud session credits for Claude (Claude Code) and ChatGPT (Codex) on any plan — Pro, Max, Plus, Team or Enterprise. The plan is detected from your own local login.
 *   **Seamless In-Window Mini Mode**: Instant transformation into an ultra-compact widget with always-on-top pinning and fast single-click account swaps.
 *   **DPAPI Enterprise Security**: Inactive profiles are encrypted on disk using Windows Data Protection API (DPAPI) tied to the active Windows user context.
 
@@ -89,6 +89,22 @@
     `custom-protocol` feature that embeds `dist/` into the binary for production.
 
 The compiled binary will be located at `target/release/app.exe`.
+
+---
+
+## 🔑 OAuth Configuration
+
+To securely authenticate and refresh tokens without embedding sensitive secrets in the source code, configure the following environment variables:
+
+- `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (Required): Used for adding accounts and refreshing Google OAuth tokens.
+- `ANTIGRAVITY_OAUTH_CLIENT_ID` (Optional): Overrides the default Google OAuth client ID when using a custom project.
+
+Set your secret in PowerShell:
+```powershell
+[Environment]::SetEnvironmentVariable("ANTIGRAVITY_OAUTH_CLIENT_SECRET", "<your-secret>", "User")
+```
+
+Claude and Codex limits need no configuration and work with any plan: they are read only from the signed-in user's local `~/.claude` and `~/.codex` folders. No account is bundled with the app.
 
 ---
 

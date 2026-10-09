@@ -1,5 +1,6 @@
 mod credentials;
 mod logging;
+pub mod oauth_client;
 mod paths;
 mod process;
 mod quota;
