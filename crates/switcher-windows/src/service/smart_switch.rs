@@ -67,10 +67,10 @@ impl SwitcherService {
                             // Check top-level folder modified time
                             if let Ok(meta) = entry.metadata() {
                                 if let Ok(modified) = meta.modified() {
-                                    if let Ok(elapsed) = now.duration_since(modified) {
-                                        if elapsed.as_secs() < 120 {
-                                            return true;
-                                        }
+                                    // mtime after `now` (written during the scan) means active, not unknown
+                                    let elapsed = now.duration_since(modified).unwrap_or_default();
+                                    if elapsed.as_secs() < 120 {
+                                        return true;
                                     }
                                 }
                             }
@@ -82,10 +82,9 @@ impl SwitcherService {
                             if transcript_path.is_file() {
                                 if let Ok(meta) = std::fs::metadata(&transcript_path) {
                                     if let Ok(modified) = meta.modified() {
-                                        if let Ok(elapsed) = now.duration_since(modified) {
-                                            if elapsed.as_secs() < 120 {
-                                                return true;
-                                            }
+                                        let elapsed = now.duration_since(modified).unwrap_or_default();
+                                        if elapsed.as_secs() < 120 {
+                                            return true;
                                         }
                                     }
                                 }
