@@ -83,9 +83,10 @@
 
 4.  **Build production release binary:**
     ```powershell
-    npm run build
-    cargo build --release --bin app
+    npx tauri build --no-bundle
     ```
+    Use the Tauri CLI, not plain `cargo build --release`: only the CLI enables the
+    `custom-protocol` feature that embeds `dist/` into the binary for production.
 
 The compiled binary will be located at `target/release/app.exe`.
 
@@ -93,7 +94,14 @@ The compiled binary will be located at `target/release/app.exe`.
 
 ## ⚖️ Legal Disclaimer
 
-This application is provided strictly for personal workflow optimization and research purposes. Users are responsible for adhering to all relevant third-party Terms of Service.
+This application is provided strictly for personal workflow optimization and research purposes. Users are responsible for adhering to all relevant third-party Terms of Service, including the [Google Terms of Service](https://policies.google.com/terms) and the [Gemini API Terms of Service](https://ai.google.dev/gemini-api/terms).
+
+> [!CAUTION]
+> Programmatically switching accounts to get around usage limits or quotas may violate Google's policies and can lead to account suspension. The developers and contributors are not liable for any loss of data, loss of access, account bans or service disruption arising from use of this software. You run it at your own risk.
+
+## 🙏 Credits
+
+This project is a fork of [Ximeeek/Antigravity-Account-Switcher](https://github.com/Ximeeek/Antigravity-Account-Switcher), released under the MIT License. The quota monitoring, Process Guardian and external AI account features were added in this fork.
 
 ---
 
