@@ -4,6 +4,20 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum EligibilityStatus {
+    Eligible,
+    NeedsVerification { since: DateTime<Utc>, message: String },
+    Unknown,
+}
+
+impl Default for EligibilityStatus {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProfileMetadata {
     pub profile_id: Uuid,
@@ -16,6 +30,8 @@ pub struct ProfileMetadata {
     pub token_expiry: Option<DateTime<Utc>>,
     #[serde(default = "existing_profile_has_snapshot")]
     pub snapshot_initialized: bool,
+    #[serde(default)]
+    pub eligibility: EligibilityStatus,
 }
 
 fn existing_profile_has_snapshot() -> bool {

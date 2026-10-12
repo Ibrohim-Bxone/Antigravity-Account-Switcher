@@ -4,7 +4,7 @@ pub mod oauth_client;
 mod paths;
 mod process;
 mod quota;
-mod service;
+pub mod service;
 pub mod uninstall;
 mod webview;
 
