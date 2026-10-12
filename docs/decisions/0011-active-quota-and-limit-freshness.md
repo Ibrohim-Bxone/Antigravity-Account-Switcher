@@ -41,7 +41,9 @@ missing:
    `%LOCALAPPDATA%\AntigravitySwitcher\claude_usage_cache.json` (percentages, reset times and fetch
    time only, no token). When the token is expired or the request fails, the cache is returned with
    reset windows applied and `source: "cached_oauth"`.
-6. **Tests stay offline.** With `BYPASS_SYNC_ACTIVE_PROFILE` (debug builds only) the background quota
+6. **Missing secret pauses too.** If `ANTIGRAVITY_OAUTH_CLIENT_SECRET` is not set, quota refresh is
+   paused the same way as after `invalid_client`: one log line instead of one per profile every 5s.
+7. **Tests stay offline.** With `BYPASS_SYNC_ACTIVE_PROFILE` (debug builds only) the background quota
    fetch is skipped, so tests never read the real credential store or call Google.
 
 ## Consequences

@@ -96,7 +96,9 @@ The compiled binary will be located at `target/release/app.exe`.
 
 To securely authenticate and refresh tokens without embedding sensitive secrets in the source code, configure the following environment variables:
 
-- `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (Required): Used for adding accounts and refreshing Google OAuth tokens.
+- `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (Optional): Used for the in-app Google login and for refreshing tokens of inactive profiles.
+  Without it the app still works: add accounts with **Add current account** (the account signed in to Antigravity),
+  and quota is shown for the active account only. The missing secret is logged once, not on every poll.
 - `ANTIGRAVITY_OAUTH_CLIENT_ID` (Optional): Overrides the default Google OAuth client ID when using a custom project.
 
 Set your secret in PowerShell:

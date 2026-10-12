@@ -24,10 +24,14 @@ pub fn quota_checks_paused() -> bool {
         .is_some_and(|t| t.elapsed() < CLIENT_REJECTED_PAUSE)
 }
 
+fn pause_quota_checks() {
+    *client_rejected_at().lock().unwrap_or_else(|p| p.into_inner()) =
+        Some(std::time::Instant::now());
+}
+
 pub fn note_token_refresh_error(err_body: &str) {
     if err_body.contains("invalid_client") {
-        *client_rejected_at().lock().unwrap_or_else(|p| p.into_inner()) =
-            Some(std::time::Instant::now());
+        pause_quota_checks();
     }
 }
 
@@ -127,10 +131,18 @@ impl QuotaDecryptor {
     ) -> std::result::Result<ProfileQuotaView, String> {
         if quota_checks_paused() {
             return Err(format!(
-                "{QUOTA_PAUSED_PREFIX}: OAuth client was rejected (invalid_client)"
+                "{QUOTA_PAUSED_PREFIX}: OAuth client unavailable (rejected or secret not set)"
             ));
         }
-        let (client_id, client_secret) = crate::oauth_client::oauth_client_credentials()?;
+        // A missing secret will not appear by itself either: report it once, then stay quiet
+        // instead of failing (and logging) every 5 seconds for every profile.
+        let (client_id, client_secret) = match crate::oauth_client::oauth_client_credentials() {
+            Ok(credentials) => credentials,
+            Err(err) => {
+                pause_quota_checks();
+                return Err(err);
+            }
+        };
         let client = reqwest::Client::new();
 
         let params = [
