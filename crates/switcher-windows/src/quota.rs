@@ -40,51 +40,10 @@ impl QuotaDecryptor {
         Ok(HashMap::new())
     }
 
-    pub async fn fetch_live_quota(
-        refresh_token: &str,
+    pub async fn fetch_quota_summary(
+        access_token: &str,
     ) -> std::result::Result<ProfileQuotaView, String> {
-        if quota_checks_paused() {
-            return Err(format!(
-                "{QUOTA_PAUSED_PREFIX}: OAuth client was rejected (invalid_client)"
-            ));
-        }
-        let (client_id, client_secret) = crate::oauth_client::oauth_client_credentials()?;
         let client = reqwest::Client::new();
-
-        let params = [
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-        ];
-
-        let resp = client
-            .post("https://oauth2.googleapis.com/token")
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to refresh token: {e}"))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let err_body = resp.text().await.unwrap_or_default();
-            note_token_refresh_error(&err_body);
-            return Err(format!(
-                "Token refresh returned status {status}: {err_body}"
-            ));
-        }
-
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read token response: {e}"))?;
-        let val: serde_json::Value = serde_json::from_str(&body)
-            .map_err(|e| format!("Failed to parse token response: {e}"))?;
-        let access_token = val
-            .get("access_token")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| "No access_token in refresh response".to_owned())?;
-
         let quota_resp = client
             .post("https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
             .header("Authorization", format!("Bearer {}", access_token))
@@ -162,7 +121,56 @@ impl QuotaDecryptor {
             quota_groups,
         })
     }
+
+    pub async fn fetch_live_quota(
+        refresh_token: &str,
+    ) -> std::result::Result<ProfileQuotaView, String> {
+        if quota_checks_paused() {
+            return Err(format!(
+                "{QUOTA_PAUSED_PREFIX}: OAuth client was rejected (invalid_client)"
+            ));
+        }
+        let (client_id, client_secret) = crate::oauth_client::oauth_client_credentials()?;
+        let client = reqwest::Client::new();
+
+        let params = [
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ];
+
+        let resp = client
+            .post("https://oauth2.googleapis.com/token")
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to refresh token: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp.text().await.unwrap_or_default();
+            note_token_refresh_error(&err_body);
+            return Err(format!(
+                "Token refresh returned status {status}: {err_body}"
+            ));
+        }
+
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read token response: {e}"))?;
+        let val: serde_json::Value = serde_json::from_str(&body)
+            .map_err(|e| format!("Failed to parse token response: {e}"))?;
+        let access_token = val
+            .get("access_token")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "No access_token in refresh response".to_owned())?;
+
+        Self::fetch_quota_summary(access_token).await
+    }
 }
+
 
 #[cfg(test)]
 mod tests {

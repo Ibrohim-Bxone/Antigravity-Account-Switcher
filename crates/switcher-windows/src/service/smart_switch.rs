@@ -280,15 +280,17 @@ impl SwitcherService {
 
             let mut is_emergency = matches!(active_profile.metadata.eligibility, switcher_core::EligibilityStatus::NeedsVerification { .. });
 
+            let active_exhausted_recent = {
+                let map = quota_exhausted_state().lock().unwrap();
+                if let Some(time) = map.get(&active_profile_id) {
+                    chrono::Utc::now().signed_duration_since(*time).num_hours() < 5
+                } else {
+                    false
+                }
+            };
+
             if is_probe_mode {
-                let exhausted = {
-                    let map = quota_exhausted_state().lock().unwrap();
-                    if let Some(time) = map.get(&active_profile_id) {
-                        chrono::Utc::now().signed_duration_since(*time).num_hours() < 5
-                    } else {
-                        false
-                    }
-                };
+                let exhausted = active_exhausted_recent;
 
                 if exhausted {
                     is_emergency = true;
@@ -319,9 +321,14 @@ impl SwitcherService {
 
                 let gemini_exhausted = rem_5h < 0.10 || rem_weekly < 0.05;
                 let p3_exhausted = rem_3p_5h < 0.10 || rem_3p_weekly < 0.05;
+                let needs_verification = matches!(active_profile.metadata.eligibility, switcher_core::EligibilityStatus::NeedsVerification { .. });
 
-                // If active profile still has ample quota, do nothing
-                if !gemini_exhausted && !p3_exhausted && !matches!(active_profile.metadata.eligibility, switcher_core::EligibilityStatus::NeedsVerification { .. }) {
+                if active_exhausted_recent {
+                    is_emergency = true;
+                }
+
+                // If active profile still has ample quota and neither needs verification nor is marked exhausted in state, do nothing
+                if !active_exhausted_recent && !gemini_exhausted && !p3_exhausted && !needs_verification {
                     return Ok(());
                 }
 
@@ -338,17 +345,25 @@ impl SwitcherService {
                     return Ok(());
                 }
 
-                self.logger.warn(
-                    None,
-                    "smart_switch",
-                    format!(
-                        "Active profile limits exhausted (Gemini: 5h={:.1}%, weekly={:.1}%; Claude/Codex: 5h={:.1}%, weekly={:.1}%). Finding verified alternative profile...",
-                        rem_5h * 100.0,
-                        rem_weekly * 100.0,
-                        rem_3p_5h * 100.0,
-                        rem_3p_weekly * 100.0,
-                    ),
-                );
+                if active_exhausted_recent {
+                    self.logger.warn(
+                        None,
+                        "smart_switch",
+                        "Active profile in quota mode is marked QuotaExhausted in state (emergency). Finding verified alternative profile...",
+                    );
+                } else {
+                    self.logger.warn(
+                        None,
+                        "smart_switch",
+                        format!(
+                            "Active profile limits exhausted (Gemini: 5h={:.1}%, weekly={:.1}%; Claude/Codex: 5h={:.1}%, weekly={:.1}%). Finding verified alternative profile...",
+                            rem_5h * 100.0,
+                            rem_weekly * 100.0,
+                            rem_3p_5h * 100.0,
+                            rem_3p_weekly * 100.0,
+                        ),
+                    );
+                }
             }
 
             let mut candidate: Option<(Uuid, f64)> = None;
@@ -363,15 +378,16 @@ impl SwitcherService {
                     continue;
                 }
 
+                let exhausted = {
+                    let map = quota_exhausted_state().lock().unwrap();
+                    if let Some(time) = map.get(&profile.metadata.profile_id) {
+                        chrono::Utc::now().signed_duration_since(*time).num_hours() < 5
+                    } else {
+                        false
+                    }
+                };
+
                 if is_probe_mode {
-                    let exhausted = {
-                        let map = quota_exhausted_state().lock().unwrap();
-                        if let Some(time) = map.get(&profile.metadata.profile_id) {
-                            chrono::Utc::now().signed_duration_since(*time).num_hours() < 5
-                        } else {
-                            false
-                        }
-                    };
                     if !exhausted {
                         if let Some(existing) = candidate_no_quota {
                             let existing_prof = profiles.iter().find(|p| p.metadata.profile_id == existing).unwrap();
@@ -396,11 +412,24 @@ impl SwitcherService {
                                 candidate = Some((profile.metadata.profile_id, cand_5h));
                             }
                         }
+                    } else if !exhausted {
+                        if let Some(existing) = candidate_no_quota {
+                            let existing_prof = profiles.iter().find(|p| p.metadata.profile_id == existing).unwrap();
+                            if profile.metadata.last_activated_at < existing_prof.metadata.last_activated_at {
+                                candidate_no_quota = Some(profile.metadata.profile_id);
+                            }
+                        } else {
+                            candidate_no_quota = Some(profile.metadata.profile_id);
+                        }
                     }
                 }
             }
 
-            let target_id = if is_probe_mode { candidate_no_quota } else { candidate.map(|(id, _)| id) };
+            let target_id = if is_probe_mode {
+                candidate_no_quota
+            } else {
+                candidate.map(|(id, _)| id).or(candidate_no_quota)
+            };
 
             if let Some(target_id) = target_id {
                 self.logger.warn(

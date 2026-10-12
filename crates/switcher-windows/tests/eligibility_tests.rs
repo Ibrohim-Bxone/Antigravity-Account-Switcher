@@ -793,3 +793,244 @@ async fn test_probe_mode_all_candidates_exhausted_stops_after_5_attempts() {
     let remaining_results = mock_probe.results.lock().unwrap().len();
     assert_eq!(remaining_results, 1, "Should have stopped after exactly 5 switch attempts (6 probes total)");
 }
+
+#[tokio::test]
+async fn test_quota_mode_switches_to_oldest_candidate_without_quota() {
+    let _serial = SERIAL.lock().await;
+    unsafe {
+        std::env::set_var("BYPASS_SYNC_ACTIVE_PROFILE", "1");
+        std::env::set_var("MOCK_AGENT_WORKING", "0");
+    }
+    switcher_windows::service::smart_switch::quota_exhausted_state().lock().unwrap().clear();
+    *switcher_windows::service::smart_switch::active_probe_state().lock().unwrap() = None;
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut paths = SwitcherPaths::from_root(temp.path().to_path_buf()).unwrap();
+    paths.state_db = temp.path().join("state.vscdb");
+    paths.ensure().unwrap();
+
+    let active_id = Uuid::new_v4();
+    let config_json = serde_json::json!({
+        "schemaVersion": 1,
+        "httpPort": 48731,
+        "apiSecret": "test",
+        "activeProfileId": active_id,
+        "smartSwitchEnabled": true,
+        "switchLevel": 1,
+        "patchCooldownMs": 100,
+        "minimizeToTray": true
+    });
+    std::fs::write(&paths.config, config_json.to_string()).unwrap();
+
+    let active_meta = ProfileMetadata {
+        profile_id: active_id,
+        account_email: Some("active_c@test.com".to_string()),
+        display_name: "Active".to_string(),
+        created_at: chrono::Utc::now(),
+        last_activated_at: chrono::Utc::now(),
+        token_expiry: Some(chrono::Utc::now() + chrono::Duration::days(1)),
+        snapshot_initialized: true,
+        eligibility: EligibilityStatus::Unknown,
+    };
+    let active_profile_dir = paths.profile_dir(active_id);
+    std::fs::create_dir_all(&active_profile_dir).unwrap();
+    std::fs::write(active_profile_dir.join("metadata.json"), serde_json::to_string(&active_meta).unwrap()).unwrap();
+    let dummy_dpapi = switcher_windows::CredentialStore::default().protect(b"dummy session").unwrap();
+    std::fs::write(active_profile_dir.join("credentials.enc"), &dummy_dpapi.0).unwrap();
+
+    // Active profile has quota: 5h at 2% (< 10% threshold)
+    let low_quota = switcher_core::ProfileQuotaView {
+        subscription_tier: "Google AI Pro".to_string(),
+        quota_groups: vec![
+            switcher_core::QuotaGroupView {
+                display_name: "Gemini".to_string(),
+                description: "".to_string(),
+                buckets: vec![
+                    switcher_core::QuotaBucketView {
+                        bucket_id: "gemini-5h".to_string(),
+                        window: "5h".to_string(),
+                        remaining_fraction: 0.02,
+                        reset_time: None,
+                        display_name: "5h".to_string(),
+                        description: None,
+                    },
+                    switcher_core::QuotaBucketView {
+                        bucket_id: "gemini-weekly".to_string(),
+                        window: "1w".to_string(),
+                        remaining_fraction: 1.0,
+                        reset_time: None,
+                        display_name: "1w".to_string(),
+                        description: None,
+                    }
+                ]
+            }
+        ]
+    };
+    switcher_windows::service::profiles::inject_test_quota("active_c@test.com".to_string(), low_quota);
+
+    // Candidate 1: No quota, activated 30 minutes ago
+    let cand1_id = Uuid::new_v4();
+    let cand1_meta = ProfileMetadata {
+        profile_id: cand1_id,
+        account_email: Some("cand1_no_quota@test.com".to_string()),
+        display_name: "Cand1".to_string(),
+        created_at: chrono::Utc::now(),
+        last_activated_at: chrono::Utc::now() - chrono::Duration::minutes(30),
+        token_expiry: Some(chrono::Utc::now() + chrono::Duration::days(1)),
+        snapshot_initialized: true,
+        eligibility: EligibilityStatus::Unknown,
+    };
+    let cand1_dir = paths.profile_dir(cand1_id);
+    std::fs::create_dir_all(&cand1_dir).unwrap();
+    std::fs::write(cand1_dir.join("metadata.json"), serde_json::to_string(&cand1_meta).unwrap()).unwrap();
+    std::fs::write(cand1_dir.join("credentials.enc"), &dummy_dpapi.0).unwrap();
+
+    // Candidate 2: No quota, activated 2 hours ago (older last_activated_at!)
+    let cand2_id = Uuid::new_v4();
+    let cand2_meta = ProfileMetadata {
+        profile_id: cand2_id,
+        account_email: Some("cand2_no_quota@test.com".to_string()),
+        display_name: "Cand2".to_string(),
+        created_at: chrono::Utc::now(),
+        last_activated_at: chrono::Utc::now() - chrono::Duration::hours(2),
+        token_expiry: Some(chrono::Utc::now() + chrono::Duration::days(1)),
+        snapshot_initialized: true,
+        eligibility: EligibilityStatus::Unknown,
+    };
+    let cand2_dir = paths.profile_dir(cand2_id);
+    std::fs::create_dir_all(&cand2_dir).unwrap();
+    std::fs::write(cand2_dir.join("metadata.json"), serde_json::to_string(&cand2_meta).unwrap()).unwrap();
+    std::fs::write(cand2_dir.join("credentials.enc"), &dummy_dpapi.0).unwrap();
+
+    let service = SwitcherService::new(paths.clone()).unwrap();
+
+    let mock_probe = MockProbe {
+        results: Arc::new(Mutex::new(vec![
+            ProbeResult::Ok, // active probe
+            ProbeResult::Ok, // cand2 probe after switch
+        ])),
+    };
+
+    let result = service.check_and_perform_smart_switch_with_probe(&mock_probe).await;
+    assert!(result.is_ok());
+
+    let config_str = std::fs::read_to_string(&paths.config).unwrap();
+    let updated_config: serde_json::Value = serde_json::from_str(&config_str).unwrap();
+    // In quota mode without quota on candidates, should switch to cand2 (oldest last_activated_at)
+    assert_eq!(updated_config["activeProfileId"].as_str().unwrap(), cand2_id.to_string());
+}
+
+#[tokio::test]
+async fn test_quota_mode_switches_when_active_exhausted_in_state_even_if_quota_100_percent() {
+    let _serial = SERIAL.lock().await;
+    unsafe {
+        std::env::set_var("BYPASS_SYNC_ACTIVE_PROFILE", "1");
+        std::env::set_var("MOCK_AGENT_WORKING", "0");
+    }
+    switcher_windows::service::smart_switch::quota_exhausted_state().lock().unwrap().clear();
+    *switcher_windows::service::smart_switch::active_probe_state().lock().unwrap() = None;
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut paths = SwitcherPaths::from_root(temp.path().to_path_buf()).unwrap();
+    paths.state_db = temp.path().join("state.vscdb");
+    paths.ensure().unwrap();
+
+    let active_id = Uuid::new_v4();
+    let config_json = serde_json::json!({
+        "schemaVersion": 1,
+        "httpPort": 48731,
+        "apiSecret": "test",
+        "activeProfileId": active_id,
+        "smartSwitchEnabled": true,
+        "switchLevel": 1,
+        "patchCooldownMs": 100,
+        "minimizeToTray": true
+    });
+    std::fs::write(&paths.config, config_json.to_string()).unwrap();
+
+    let active_meta = ProfileMetadata {
+        profile_id: active_id,
+        account_email: Some("active_d@test.com".to_string()),
+        display_name: "Active".to_string(),
+        created_at: chrono::Utc::now(),
+        last_activated_at: chrono::Utc::now(),
+        token_expiry: Some(chrono::Utc::now() + chrono::Duration::days(1)),
+        snapshot_initialized: true,
+        eligibility: EligibilityStatus::Unknown,
+    };
+    let active_profile_dir = paths.profile_dir(active_id);
+    std::fs::create_dir_all(&active_profile_dir).unwrap();
+    std::fs::write(active_profile_dir.join("metadata.json"), serde_json::to_string(&active_meta).unwrap()).unwrap();
+    let dummy_dpapi = switcher_windows::CredentialStore::default().protect(b"dummy session").unwrap();
+    std::fs::write(active_profile_dir.join("credentials.enc"), &dummy_dpapi.0).unwrap();
+
+    // Active profile has 100% quota!
+    let full_quota = switcher_core::ProfileQuotaView {
+        subscription_tier: "Google AI Pro".to_string(),
+        quota_groups: vec![
+            switcher_core::QuotaGroupView {
+                display_name: "Gemini".to_string(),
+                description: "".to_string(),
+                buckets: vec![
+                    switcher_core::QuotaBucketView {
+                        bucket_id: "gemini-5h".to_string(),
+                        window: "5h".to_string(),
+                        remaining_fraction: 1.0,
+                        reset_time: None,
+                        display_name: "5h".to_string(),
+                        description: None,
+                    },
+                    switcher_core::QuotaBucketView {
+                        bucket_id: "gemini-weekly".to_string(),
+                        window: "1w".to_string(),
+                        remaining_fraction: 1.0,
+                        reset_time: None,
+                        display_name: "1w".to_string(),
+                        description: None,
+                    }
+                ]
+            }
+        ]
+    };
+    switcher_windows::service::profiles::inject_test_quota("active_d@test.com".to_string(), full_quota.clone());
+
+    // Mark active profile as QuotaExhausted in state within 5h (emergency!)
+    switcher_windows::service::smart_switch::quota_exhausted_state()
+        .lock()
+        .unwrap()
+        .insert(active_id, chrono::Utc::now() - chrono::Duration::minutes(15));
+
+    let cand_id = Uuid::new_v4();
+    let cand_meta = ProfileMetadata {
+        profile_id: cand_id,
+        account_email: Some("cand_d@test.com".to_string()),
+        display_name: "Cand".to_string(),
+        created_at: chrono::Utc::now(),
+        last_activated_at: chrono::Utc::now(),
+        token_expiry: Some(chrono::Utc::now() + chrono::Duration::days(1)),
+        snapshot_initialized: true,
+        eligibility: EligibilityStatus::Unknown,
+    };
+    let cand_dir = paths.profile_dir(cand_id);
+    std::fs::create_dir_all(&cand_dir).unwrap();
+    std::fs::write(cand_dir.join("metadata.json"), serde_json::to_string(&cand_meta).unwrap()).unwrap();
+    std::fs::write(cand_dir.join("credentials.enc"), &dummy_dpapi.0).unwrap();
+    switcher_windows::service::profiles::inject_test_quota("cand_d@test.com".to_string(), full_quota);
+
+    let service = SwitcherService::new(paths.clone()).unwrap();
+
+    let mock_probe = MockProbe {
+        results: Arc::new(Mutex::new(vec![
+            ProbeResult::Ok, // active probe
+            ProbeResult::Ok, // candidate probe after switch
+        ])),
+    };
+
+    let result = service.check_and_perform_smart_switch_with_probe(&mock_probe).await;
+    assert!(result.is_ok());
+
+    let config_str = std::fs::read_to_string(&paths.config).unwrap();
+    let updated_config: serde_json::Value = serde_json::from_str(&config_str).unwrap();
+    // Must switch even though quota numbers were 100%
+    assert_eq!(updated_config["activeProfileId"].as_str().unwrap(), cand_id.to_string());
+}

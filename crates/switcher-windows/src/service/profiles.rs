@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::helpers::{
-    check_has_refresh_token, parse_refresh_token, parse_token_expiry, read_antigravity_version,
-    try_parse_email_from_credential, validate_display_name, windows_version,
+    check_has_refresh_token, fresh_access_token, parse_refresh_token, parse_token_expiry,
+    read_antigravity_version, try_parse_email_from_credential, validate_display_name,
+    windows_version,
 };
 use super::manifest::path_summary;
 use crate::quota::QuotaDecryptor;
@@ -628,6 +629,13 @@ impl SwitcherService {
                 .warn(None, "quota", format!("Failed to decrypt quotas: {e}"));
             HashMap::new()
         });
+        // The live path caches quotas per email; reuse fresh entries so non-live views
+        // (HTTP API, app state) agree with what Smart Switch sees.
+        for (email, (quota, fetched_at)) in lock_quota_cache().iter() {
+            if fetched_at.elapsed() < std::time::Duration::from_secs(300) {
+                quotas.entry(email.clone()).or_insert_with(|| quota.clone());
+            }
+        }
 
         for entry in fs::read_dir(&self.paths.profiles)
             .map_err(|source| SwitcherError::io(&self.paths.profiles, source))?
@@ -744,7 +752,9 @@ impl SwitcherService {
                     profile.quota = Some(quota.clone());
                 }
 
-                if !has_valid_cache {
+                // Tests set this (debug builds only): never read the real credential store or call Google.
+                let test_bypass = cfg!(debug_assertions) && std::env::var("BYPASS_SYNC_ACTIVE_PROFILE").is_ok();
+                if !has_valid_cache && !test_bypass {
                     let credential_bytes = if profile.is_active {
                         self.credentials.read_active().ok()
                     } else {
@@ -753,6 +763,49 @@ impl SwitcherService {
                     };
 
                     if let Some(ref bytes) = credential_bytes {
+                        if profile.is_active {
+                            if let Some(access_token) = fresh_access_token(bytes, Utc::now()) {
+                                let should_fetch = {
+                                    let mut fetching = lock_quota_fetching();
+                                    if fetching.contains(email) {
+                                        false
+                                    } else {
+                                        fetching.insert(email.clone());
+                                        true
+                                    }
+                                };
+
+                                if should_fetch {
+                                    let email_clone = email.clone();
+                                    let logger_clone = self.logger.clone();
+
+                                    tokio::spawn(async move {
+                                        match QuotaDecryptor::fetch_quota_summary(&access_token).await {
+                                            Ok(live_quota) => {
+                                                let mut cache = lock_quota_cache();
+                                                cache.insert(
+                                                    email_clone.clone(),
+                                                    (live_quota, std::time::Instant::now()),
+                                                );
+                                            }
+                                            Err(err) => {
+                                                logger_clone.warn(
+                                                    None,
+                                                    "quota",
+                                                    format!(
+                                                        "Failed to fetch quota summary in background for {}: {}",
+                                                        email_clone, err
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        lock_quota_fetching().remove(&email_clone);
+                                    });
+                                }
+                                continue;
+                            }
+                        }
+
                         if let Some(ref refresh_token) = parse_refresh_token(bytes) {
                             let should_fetch = {
                                 let mut fetching = lock_quota_fetching();

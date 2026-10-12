@@ -345,3 +345,110 @@ pub(crate) fn normalize_antigravity_credential(bytes: &[u8]) -> std::result::Res
     }
 }
 
+pub(crate) fn fresh_access_token(bytes: &[u8], now: DateTime<Utc>) -> Option<String> {
+    let value: Value = serde_json::from_slice(bytes).ok()?;
+    let target = if let Some(inner) = value.get("token").filter(|t| t.is_object()) {
+        inner
+    } else {
+        &value
+    };
+
+    let access_token = target
+        .get("access_token")
+        .or_else(|| value.get("access_token"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())?;
+
+    let expiry_val = target
+        .get("expiry")
+        .or_else(|| value.get("expiry"))
+        .or_else(|| target.get("expires_at"))
+        .or_else(|| value.get("expires_at"))?;
+
+    let expiry_str = expiry_val.as_str()?;
+    let expiry_dt = DateTime::parse_from_rfc3339(expiry_str).ok()?.with_timezone(&Utc);
+
+    if (expiry_dt - now).num_seconds() >= 60 {
+        Some(access_token.to_string())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fresh_access_token() {
+        let now = Utc::now();
+
+        // Fresh token (>= 60s remaining)
+        let fresh_expiry = (now + chrono::Duration::seconds(3600)).to_rfc3339();
+        let fresh_json = serde_json::json!({
+            "token": {
+                "access_token": "fresh_secret_token",
+                "expiry": fresh_expiry
+            }
+        });
+        let res = fresh_access_token(serde_json::to_vec(&fresh_json).unwrap().as_slice(), now);
+        assert_eq!(res.as_deref(), Some("fresh_secret_token"));
+
+        // Expired token
+        let expired_expiry = (now - chrono::Duration::seconds(10)).to_rfc3339();
+        let expired_json = serde_json::json!({
+            "token": {
+                "access_token": "expired_token",
+                "expiry": expired_expiry
+            }
+        });
+        let res = fresh_access_token(serde_json::to_vec(&expired_json).unwrap().as_slice(), now);
+        assert!(res.is_none());
+
+        // Less than 60s left
+        let soon_expiry = (now + chrono::Duration::seconds(30)).to_rfc3339();
+        let soon_json = serde_json::json!({
+            "token": {
+                "access_token": "expiring_soon_token",
+                "expiry": soon_expiry
+            }
+        });
+        let res = fresh_access_token(serde_json::to_vec(&soon_json).unwrap().as_slice(), now);
+        assert!(res.is_none());
+
+        // No expiry field, or a malformed one
+        let no_expiry_json = serde_json::json!({
+            "token": {
+                "access_token": "no_expiry_token"
+            }
+        });
+        let res = fresh_access_token(serde_json::to_vec(&no_expiry_json).unwrap().as_slice(), now);
+        assert!(res.is_none());
+
+        let malformed_expiry_json = serde_json::json!({
+            "token": {
+                "access_token": "bad_expiry_token",
+                "expiry": "not-rfc3339-timestamp"
+            }
+        });
+        let res = fresh_access_token(serde_json::to_vec(&malformed_expiry_json).unwrap().as_slice(), now);
+        assert!(res.is_none());
+
+        // Real Antigravity format: 7 fractional digits and a local offset
+        let real_format = serde_json::json!({
+            "token": { "access_token": "real_format_token", "expiry": "2026-10-12T11:21:47.2302208+05:00" }
+        });
+        let at = DateTime::parse_from_rfc3339("2026-10-12T10:00:00+05:00").unwrap().with_timezone(&Utc);
+        let res = fresh_access_token(serde_json::to_vec(&real_format).unwrap().as_slice(), at);
+        assert_eq!(res.as_deref(), Some("real_format_token"));
+
+        // Root-level access_token and expiry
+        let root_token_json = serde_json::json!({
+            "access_token": "root_level_token",
+            "expiry": fresh_expiry
+        });
+        let res = fresh_access_token(serde_json::to_vec(&root_token_json).unwrap().as_slice(), now);
+        assert_eq!(res.as_deref(), Some("root_level_token"));
+    }
+}
+
