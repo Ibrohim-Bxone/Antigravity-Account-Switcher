@@ -11,5 +11,6 @@
 | [0007](0007-switch-levels.md) | Accepted | Support four switch levels (1, 1+, 2, 2+) with custom `app.asar` patching for Level 2+. |
 | [0008](0008-antigravity-two-architecture.md) | Accepted | Align codebase with standalone Antigravity 2.0 and remove legacy editor code. |
 | [0009](0009-smart-switch-limits-thresholds.md) | Accepted | Implement Smart Switch background quota monitoring and safety interlocks. |
+| [0010](0010-probe-based-smart-switch.md) | Accepted | Probe accounts with `agy`; skip accounts that need verification; switch even when quota cannot be read. |
 
 These records document our architectural decisions, their rationale, and consequences. Changing an accepted decision requires drafting a new ADR that supersedes the previous one rather than silently editing history.
