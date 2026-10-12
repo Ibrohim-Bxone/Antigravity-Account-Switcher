@@ -108,6 +108,8 @@ If Google rejects the OAuth client (`401 invalid_client`), quota numbers cannot 
 then runs in **probe mode**: it checks the active account with a one-line `agy` request and moves on
 when that account asks for verification, needs a new login, or is out of quota. Quota polling pauses
 for 6 hours after the rejection. Details: [ADR-0010](docs/decisions/0010-probe-based-smart-switch.md).
+The active account's quota is still shown: it is read with the access token Antigravity keeps fresh
+([ADR-0011](docs/decisions/0011-active-quota-and-limit-freshness.md)).
 
 Claude and Codex limits need no configuration and work with any plan: they are read only from the signed-in user's local `~/.claude` and `~/.codex` folders. No account is bundled with the app.
 
