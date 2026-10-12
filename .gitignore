@@ -59,3 +59,7 @@ firebase-adminsdk*.json
 
 # agy conveyor artefacts
 .agy/
+
+# Python tooling
+__pycache__/
+.venv/
