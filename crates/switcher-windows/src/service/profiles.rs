@@ -756,7 +756,7 @@ impl SwitcherService {
                         if let Some(ref refresh_token) = parse_refresh_token(bytes) {
                             let should_fetch = {
                                 let mut fetching = lock_quota_fetching();
-                                if fetching.contains(email) {
+                                if fetching.contains(email) || crate::quota::quota_checks_paused() {
                                     false
                                 } else {
                                     fetching.insert(email.clone());
@@ -778,6 +778,7 @@ impl SwitcherService {
                                                 (live_quota, std::time::Instant::now()),
                                             );
                                         }
+                                        Err(err) if crate::quota::is_quota_paused_error(&err) => {}
                                         Err(err) => {
                                             logger_clone.warn(
                                                 None,
@@ -869,6 +870,7 @@ impl SwitcherService {
                                 let handle = tokio::spawn(async move {
                                     match QuotaDecryptor::fetch_live_quota(&refresh_token).await {
                                         Ok(live_quota) => Some((email, live_quota)),
+                                        Err(err) if crate::quota::is_quota_paused_error(&err) => None,
                                         Err(err) => {
                                             logger_clone.warn(
                                                 None,
@@ -1128,6 +1130,7 @@ impl SwitcherService {
                             format!("Target quota fetched and cached successfully in background"),
                         );
                     }
+                    Err(err) if crate::quota::is_quota_paused_error(&err) => {}
                     Err(err) => {
                         logger_clone.warn(
                             None,
