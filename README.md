@@ -96,13 +96,22 @@ The compiled binary will be located at `target/release/app.exe`.
 
 To securely authenticate and refresh tokens without embedding sensitive secrets in the source code, configure the following environment variables:
 
-- `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (Required): Used for adding accounts and refreshing Google OAuth tokens.
+- `ANTIGRAVITY_OAUTH_CLIENT_SECRET` (Optional): Used for the in-app Google login and for refreshing tokens of inactive profiles.
+  Without it the app still works: add accounts with **Add current account** (the account signed in to Antigravity),
+  and quota is shown for the active account only. The missing secret is logged once, not on every poll.
 - `ANTIGRAVITY_OAUTH_CLIENT_ID` (Optional): Overrides the default Google OAuth client ID when using a custom project.
 
 Set your secret in PowerShell:
 ```powershell
 [Environment]::SetEnvironmentVariable("ANTIGRAVITY_OAUTH_CLIENT_SECRET", "<your-secret>", "User")
 ```
+
+If Google rejects the OAuth client (`401 invalid_client`), quota numbers cannot be read. Smart Switch
+then runs in **probe mode**: it checks the active account with a one-line `agy` request and moves on
+when that account asks for verification, needs a new login, or is out of quota. Quota polling pauses
+for 6 hours after the rejection. Details: [ADR-0010](docs/decisions/0010-probe-based-smart-switch.md).
+The active account's quota is still shown: it is read with the access token Antigravity keeps fresh
+([ADR-0011](docs/decisions/0011-active-quota-and-limit-freshness.md)).
 
 Claude and Codex limits need no configuration and work with any plan: they are read only from the signed-in user's local `~/.claude` and `~/.codex` folders. No account is bundled with the app.
 

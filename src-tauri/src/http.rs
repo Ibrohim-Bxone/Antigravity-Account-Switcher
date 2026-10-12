@@ -11,6 +11,59 @@ use uuid::Uuid;
 
 use switcher_windows::SwitcherService;
 
+#[derive(Debug, PartialEq)]
+pub enum HttpRoute<'a> {
+    Status,
+    State,
+    SmartSwitch,
+    AppShow,
+    Unlock,
+    EligibilityList,
+    EligibilityReset(&'a str),
+    EligibilityProbeActive,
+    ProfileActivate(&'a str),
+    NotFound,
+    BadRequest(String),
+}
+
+pub fn parse_route<'a>(method: &str, path: &'a str) -> HttpRoute<'a> {
+    if method == "GET" && path == "/api/v1/status" {
+        HttpRoute::Status
+    } else if method == "GET" && path == "/api/v1/state" {
+        HttpRoute::State
+    } else if method == "POST" && path == "/api/v1/smart-switch" {
+        HttpRoute::SmartSwitch
+    } else if method == "POST" && path == "/api/v1/app/show" {
+        HttpRoute::AppShow
+    } else if method == "POST" && path == "/api/v1/unlock" {
+        HttpRoute::Unlock
+    } else if method == "GET" && path == "/api/v1/eligibility" {
+        HttpRoute::EligibilityList
+    } else if method == "POST" && path.starts_with("/api/v1/eligibility/") && path.ends_with("/reset") {
+        let prefix = "/api/v1/eligibility/";
+        let suffix = "/reset";
+        if path.len() > prefix.len() + suffix.len() {
+            let id = &path[prefix.len()..path.len() - suffix.len()];
+            HttpRoute::EligibilityReset(id)
+        } else {
+            HttpRoute::BadRequest("Invalid path".to_string())
+        }
+    } else if method == "POST" && path == "/api/v1/eligibility/probe-active" {
+        HttpRoute::EligibilityProbeActive
+    } else if method == "POST" && path.starts_with("/api/v1/profiles/") && path.ends_with("/activate") {
+        let prefix = "/api/v1/profiles/";
+        let suffix = "/activate";
+        if path.len() > prefix.len() + suffix.len() {
+            let id = &path[prefix.len()..path.len() - suffix.len()];
+            HttpRoute::ProfileActivate(id)
+        } else {
+            HttpRoute::BadRequest("Invalid path".to_string())
+        }
+    } else {
+        HttpRoute::NotFound
+    }
+}
+
 fn handle_client(
     mut stream: TcpStream,
     service: Arc<SwitcherService>,
@@ -57,99 +110,196 @@ fn handle_client(
         }
     }
 
-    if method == "GET" && path == "/api/v1/status" {
-        match service.http_status() {
-            Ok(status) => {
-                let json = serde_json::to_string(&status)?;
-                send_response(&mut stream, 200, "OK", &json)?;
-            }
-            Err(e) => {
-                let err_msg = format!(r#"{{"error":{:?}}}"#, e.to_string());
-                send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
-            }
-        }
-    } else if method == "GET" && path == "/api/v1/state" {
-        match tauri::async_runtime::block_on(async {
-            service.app_state_live(env!("CARGO_PKG_VERSION")).await
-        }) {
-            Ok(state) => {
-                let json = serde_json::to_string(&state)?;
-                send_response(&mut stream, 200, "OK", &json)?;
-            }
-            Err(e) => {
-                let err_msg = format!(r#"{{"error":{:?}}}"#, e.to_string());
-                send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
-            }
-        }
-    } else if method == "POST" && path == "/api/v1/smart-switch" {
-        match tauri::async_runtime::block_on(async {
-            service.check_and_perform_smart_switch().await
-        }) {
-            Ok(_) => {
-                send_response(&mut stream, 200, "OK", r#"{"success":true,"message":"Smart switch checked"}"#)?;
-            }
-            Err(e) => {
-                let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
-                send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
-            }
-        }
-    } else if method == "POST" && path == "/api/v1/app/show" {
-        if let Some(window) = app_handle.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
-            let _ = window.center();
-            let _ = window.set_always_on_top(true);
-            let _ = window.set_focus();
-            let _ = window.set_always_on_top(false);
-            #[cfg(target_os = "windows")]
-            {
-                if let Ok(hwnd) = window.hwnd() {
-                    switcher_windows::force_window_foreground(hwnd.0 as isize);
+    let route = parse_route(method, path);
+
+    match route {
+        HttpRoute::Status => {
+            match service.http_status() {
+                Ok(status) => {
+                    let json = serde_json::to_string(&status)?;
+                    send_response(&mut stream, 200, "OK", &json)?;
+                }
+                Err(e) => {
+                    let err_msg = format!(r#"{{"error":{:?}}}"#, e.to_string());
+                    send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
                 }
             }
         }
-        send_response(&mut stream, 200, "OK", r#"{"success":true}"#)?;
-    } else if method == "POST" && path == "/api/v1/unlock" {
-        let body = if let Some(idx) = request_str.find("\r\n\r\n") {
-            &request_str[idx + 4..]
-        } else if let Some(idx) = request_str.find("\n\n") {
-            &request_str[idx + 2..]
-        } else {
-            ""
-        };
-        #[derive(serde::Deserialize)]
-        struct UnlockReq {
-            password: String,
+        HttpRoute::State => {
+            match tauri::async_runtime::block_on(async {
+                service.app_state_live(env!("CARGO_PKG_VERSION")).await
+            }) {
+                Ok(state) => {
+                    let json = serde_json::to_string(&state)?;
+                    send_response(&mut stream, 200, "OK", &json)?;
+                }
+                Err(e) => {
+                    let err_msg = format!(r#"{{"error":{:?}}}"#, e.to_string());
+                    send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
+                }
+            }
         }
-        match serde_json::from_str::<UnlockReq>(body.trim()) {
-            Ok(req) => match service.unlock_app(&req.password) {
+        HttpRoute::SmartSwitch => {
+            match tauri::async_runtime::block_on(async {
+                service.check_and_perform_smart_switch().await
+            }) {
                 Ok(_) => {
-                    send_response(
-                        &mut stream,
-                        200,
-                        "OK",
-                        r#"{"success":true,"message":"Application unlocked"}"#,
-                    )?;
+                    send_response(&mut stream, 200, "OK", r#"{"success":true,"message":"Smart switch checked"}"#)?;
                 }
+                Err(e) => {
+                    let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
+                    send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
+                }
+            }
+        }
+        HttpRoute::AppShow => {
+            if let Some(window) = app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_size(tauri::LogicalSize::new(800.0, 600.0));
+                let _ = window.center();
+                let _ = window.set_always_on_top(true);
+                let _ = window.set_focus();
+                let _ = window.set_always_on_top(false);
+                #[cfg(target_os = "windows")]
+                {
+                    if let Ok(hwnd) = window.hwnd() {
+                        switcher_windows::force_window_foreground(hwnd.0 as isize);
+                    }
+                }
+            }
+            send_response(&mut stream, 200, "OK", r#"{"success":true}"#)?;
+        }
+        HttpRoute::Unlock => {
+            let body = if let Some(idx) = request_str.find("\r\n\r\n") {
+                &request_str[idx + 4..]
+            } else if let Some(idx) = request_str.find("\n\n") {
+                &request_str[idx + 2..]
+            } else {
+                ""
+            };
+            #[derive(serde::Deserialize)]
+            struct UnlockReq {
+                password: String,
+            }
+            match serde_json::from_str::<UnlockReq>(body.trim()) {
+                Ok(req) => match service.unlock_app(&req.password) {
+                    Ok(_) => {
+                        send_response(
+                            &mut stream,
+                            200,
+                            "OK",
+                            r#"{"success":true,"message":"Application unlocked"}"#,
+                        )?;
+                    }
+                    Err(e) => {
+                        let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
+                        send_response(&mut stream, 400, "Bad Request", &err_msg)?;
+                    }
+                },
                 Err(e) => {
                     let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
                     send_response(&mut stream, 400, "Bad Request", &err_msg)?;
                 }
-            },
-            Err(e) => {
-                let err_msg = format!(r#"{{"success":false,"error":{:?}}}"#, e.to_string());
-                send_response(&mut stream, 400, "Bad Request", &err_msg)?;
             }
         }
-    } else if method == "POST"
-        && path.starts_with("/api/v1/profiles/")
-        && path.ends_with("/activate")
-    {
-        let prefix = "/api/v1/profiles/";
-        let suffix = "/activate";
-        if path.len() > prefix.len() + suffix.len() {
-            let profile_id_str = &path[prefix.len()..path.len() - suffix.len()];
+        HttpRoute::EligibilityList => {
+            match service.list_profiles(None) {
+                Ok(profiles) => {
+                    let mut is_probe_mode = false;
+                    for p in &profiles {
+                        if p.is_active && p.quota.is_none() {
+                            is_probe_mode = true;
+                            break;
+                        }
+                    }
+                    
+                    let map = switcher_windows::service::smart_switch::quota_exhausted_state().lock().unwrap();
+                    let mut data = Vec::new();
+                    
+                    for p in profiles {
+                        let id = p.metadata.profile_id;
+                        let exhausted_at = map.get(&id).map(|t| t.to_rfc3339());
+                        let mut entry = serde_json::json!({
+                            "id": id,
+                            "email": p.metadata.account_email,
+                            "eligibility": "unknown",
+                            "quota_exhausted_at": exhausted_at
+                        });
+                        if let switcher_core::EligibilityStatus::NeedsVerification { since, .. } = p.metadata.eligibility {
+                            entry["eligibility"] = serde_json::json!("needs_verification");
+                            entry["since"] = serde_json::json!(since);
+                        } else if p.metadata.eligibility == switcher_core::EligibilityStatus::Eligible {
+                            entry["eligibility"] = serde_json::json!("eligible");
+                        }
+                        data.push(entry);
+                    }
+                    
+                    let resp = serde_json::json!({
+                        "mode": if is_probe_mode { "probe" } else { "quota" },
+                        "profiles": data
+                    });
+                    
+                    let json = serde_json::to_string(&resp)?;
+                    send_response(&mut stream, 200, "OK", &json)?;
+                }
+                Err(e) => {
+                    let err_msg = format!(r#"{{"error":{:?}}}"#, e.to_string());
+                    send_response(&mut stream, 500, "Internal Server Error", &err_msg)?;
+                }
+            }
+        }
+        HttpRoute::EligibilityReset(profile_id_str) => {
+            match Uuid::parse_str(profile_id_str) {
+                Ok(id) => {
+                    if let Ok(mut metadata) = service.require_profile(id) {
+                        metadata.eligibility = switcher_core::EligibilityStatus::Unknown;
+                        if service.save_profile_metadata(id, &metadata).is_ok() {
+                            send_response(&mut stream, 200, "OK", r#"{"success":true}"#)?;
+                        } else {
+                            send_response(&mut stream, 500, "Internal Server Error", r#"{"error":"Failed to save"}"#)?;
+                        }
+                    } else {
+                        send_response(&mut stream, 404, "Not Found", r#"{"error":"Profile not found"}"#)?;
+                    }
+                }
+                Err(_) => {
+                    send_response(&mut stream, 400, "Bad Request", r#"{"error":"Invalid profile ID"}"#)?;
+                }
+            }
+        }
+        HttpRoute::EligibilityProbeActive => {
+            use switcher_windows::service::eligibility::{EligibilityProbe, RealEligibilityProbe, ProbeResult};
+            match tauri::async_runtime::block_on(async {
+                RealEligibilityProbe.probe().await
+            }) {
+                ProbeResult::Ok => {
+                    send_response(&mut stream, 200, "OK", r#"{"status":"ok"}"#)?;
+                }
+                ProbeResult::NeedsVerification(msg) => {
+                    let json = serde_json::json!({
+                        "status": "needs_verification",
+                        "message": msg
+                    });
+                    send_response(&mut stream, 200, "OK", &json.to_string())?;
+                }
+                ProbeResult::QuotaExhausted(msg) => {
+                    let json = serde_json::json!({
+                        "status": "quota_exhausted",
+                        "message": msg
+                    });
+                    send_response(&mut stream, 200, "OK", &json.to_string())?;
+                }
+                ProbeResult::Error(err) => {
+                    let json = serde_json::json!({
+                        "status": "error",
+                        "error": err
+                    });
+                    send_response(&mut stream, 500, "Internal Server Error", &json.to_string())?;
+                }
+            }
+        }
+        HttpRoute::ProfileActivate(profile_id_str) => {
             match Uuid::parse_str(profile_id_str) {
                 Ok(target_profile_id) => match service.request_switch(target_profile_id, None) {
                     Ok(res) => {
@@ -185,16 +335,14 @@ fn handle_client(
                     )?;
                 }
             }
-        } else {
-            send_response(
-                &mut stream,
-                400,
-                "Bad Request",
-                r#"{"error":"Invalid path"}"#,
-            )?;
         }
-    } else {
-        send_response(&mut stream, 404, "Not Found", r#"{"error":"Not Found"}"#)?;
+        HttpRoute::NotFound => {
+            send_response(&mut stream, 404, "Not Found", r#"{"error":"Not Found"}"#)?;
+        }
+        HttpRoute::BadRequest(err) => {
+            let json = serde_json::json!({"error": err});
+            send_response(&mut stream, 400, "Bad Request", &json.to_string())?;
+        }
     }
     Ok(())
 }
@@ -264,4 +412,21 @@ pub fn start_http_server(service: Arc<SwitcherService>, app_handle: AppHandle) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_route_eligibility_reset() {
+        let route = parse_route("POST", "/api/v1/eligibility/reset");
+        assert_eq!(route, HttpRoute::BadRequest("Invalid path".to_string()));
+
+        let route = parse_route("POST", "/api/v1/eligibility//reset");
+        assert_eq!(route, HttpRoute::BadRequest("Invalid path".to_string()));
+
+        let route = parse_route("POST", "/api/v1/eligibility/123/reset");
+        assert_eq!(route, HttpRoute::EligibilityReset("123"));
+    }
 }

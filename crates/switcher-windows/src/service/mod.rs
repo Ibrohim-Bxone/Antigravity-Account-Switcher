@@ -5,6 +5,7 @@ pub mod asar_patch;
  * Main exports: SwitcherService, PendingSwitch, SwitchOutcome
  */
 pub mod database;
+pub mod eligibility;
 pub mod helpers;
 pub mod manifest;
 pub mod oauth;

@@ -268,6 +268,7 @@ impl SwitcherService {
             last_activated_at: now,
             token_expiry: Some(token_expiry),
             snapshot_initialized: true,
+            eligibility: Default::default(),
         };
 
         self.save_profile_metadata(new_profile_id, &metadata)?;

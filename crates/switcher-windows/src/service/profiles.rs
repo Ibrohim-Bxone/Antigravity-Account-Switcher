@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::helpers::{
-    check_has_refresh_token, parse_refresh_token, parse_token_expiry, read_antigravity_version,
-    try_parse_email_from_credential, validate_display_name, windows_version,
+    check_has_refresh_token, fresh_access_token, parse_refresh_token, parse_token_expiry,
+    read_antigravity_version, try_parse_email_from_credential, validate_display_name,
+    windows_version,
 };
 use super::manifest::path_summary;
 use crate::quota::QuotaDecryptor;
@@ -43,6 +44,12 @@ fn lock_quota_cache() -> std::sync::MutexGuard<'static, HashMap<String, (Profile
 
 fn lock_quota_fetching() -> std::sync::MutexGuard<'static, HashSet<String>> {
     quota_fetching().lock().unwrap_or_else(|p| p.into_inner())
+}
+
+// Exposed for integration tests.
+pub fn inject_test_quota(email: String, quota: ProfileQuotaView) {
+    let mut cache = lock_quota_cache();
+    cache.insert(email, (quota, std::time::Instant::now()));
 }
 
 
@@ -272,6 +279,7 @@ impl SwitcherService {
             last_activated_at: now,
             token_expiry: parse_token_expiry(&credential),
             snapshot_initialized: true,
+            eligibility: Default::default(),
         };
 
         self.save_profile_metadata(profile_id, &metadata)?;
@@ -406,7 +414,7 @@ impl SwitcherService {
         Ok(state.settings)
     }
 
-    pub(crate) fn require_profile(&self, profile_id: Uuid) -> Result<ProfileMetadata> {
+    pub fn require_profile(&self, profile_id: Uuid) -> Result<ProfileMetadata> {
         self.load_profile_metadata(profile_id)
     }
 
@@ -463,6 +471,9 @@ impl SwitcherService {
     }
 
     pub(crate) fn sync_active_profile_on_read(&self) -> Result<Option<Uuid>> {
+        if cfg!(debug_assertions) && std::env::var("BYPASS_SYNC_ACTIVE_PROFILE").is_ok() {
+            return Ok(self.config.read().active_profile_id);
+        }
         let _guard = match self.operation_lock.try_lock() {
             Some(guard) => guard,
             None => {
@@ -522,6 +533,7 @@ impl SwitcherService {
                 last_activated_at: now,
                 token_expiry: parse_token_expiry(&active_credential),
                 snapshot_initialized: true,
+                eligibility: Default::default(),
             };
 
             self.save_profile_metadata(profile_id, &metadata)?;
@@ -597,7 +609,7 @@ impl SwitcherService {
         Ok(None)
     }
 
-    pub(crate) fn list_profiles(
+    pub fn list_profiles(
         &self,
         active_profile_id: Option<Uuid>,
     ) -> Result<Vec<ProfileView>> {
@@ -617,6 +629,13 @@ impl SwitcherService {
                 .warn(None, "quota", format!("Failed to decrypt quotas: {e}"));
             HashMap::new()
         });
+        // The live path caches quotas per email; reuse fresh entries so non-live views
+        // (HTTP API, app state) agree with what Smart Switch sees.
+        for (email, (quota, fetched_at)) in lock_quota_cache().iter() {
+            if fetched_at.elapsed() < std::time::Duration::from_secs(300) {
+                quotas.entry(email.clone()).or_insert_with(|| quota.clone());
+            }
+        }
 
         for entry in fs::read_dir(&self.paths.profiles)
             .map_err(|source| SwitcherError::io(&self.paths.profiles, source))?
@@ -644,6 +663,17 @@ impl SwitcherService {
                     let display_name = metadata.display_name.clone();
                     let account_email = metadata.account_email.clone();
                     let mut token_expiry = metadata.token_expiry;
+                    let mut eligibility = metadata.eligibility.clone();
+
+                    if let switcher_core::EligibilityStatus::NeedsVerification { since, .. } = &eligibility {
+                        if Utc::now().signed_duration_since(*since).num_hours() >= 6 {
+                            // Give a fixed account another chance: re-probed when it is next selected.
+                            eligibility = switcher_core::EligibilityStatus::Unknown;
+                            let mut updated_meta = metadata.clone();
+                            updated_meta.eligibility = eligibility.clone();
+                            let _ = self.save_profile_metadata(profile_id, &updated_meta);
+                        }
+                    }
 
                     if is_active {
                         if let Some(ref bytes) = credential_bytes {
@@ -668,6 +698,7 @@ impl SwitcherService {
                             display_name,
                             account_email,
                             token_expiry,
+                            eligibility,
                             ..metadata
                         },
                         has_refresh_token,
@@ -705,36 +736,80 @@ impl SwitcherService {
 
         for profile in &mut profiles {
             if let Some(ref email) = profile.metadata.account_email {
-                let credential_bytes = if profile.is_active {
-                    self.credentials.read_active().ok()
-                } else {
-                    self.load_profile_credential(profile.metadata.profile_id, None)
-                        .ok()
+                let (has_valid_cache, cached_val) = {
+                    let cache = lock_quota_cache();
+                    let now = std::time::Instant::now();
+                    let cache_duration = std::time::Duration::from_secs(60);
+                    if let Some((cached_quota, cached_time)) = cache.get(email) {
+                        let valid = now.duration_since(*cached_time) < cache_duration;
+                        (valid, Some(cached_quota.clone()))
+                    } else {
+                        (false, None)
+                    }
                 };
 
-                if let Some(ref bytes) = credential_bytes {
-                    if let Some(ref refresh_token) = parse_refresh_token(bytes) {
-                        let (has_valid_cache, cached_val) = {
-                            let cache = lock_quota_cache();
-                            let now = std::time::Instant::now();
-                            // Cache quota for 1 minute (60 seconds)
-                            let cache_duration = std::time::Duration::from_secs(60);
-                            if let Some((cached_quota, cached_time)) = cache.get(email) {
-                                let valid = now.duration_since(*cached_time) < cache_duration;
-                                (valid, Some(cached_quota.clone()))
-                            } else {
-                                (false, None)
-                            }
-                        };
+                if let Some(ref quota) = cached_val {
+                    profile.quota = Some(quota.clone());
+                }
 
-                        if let Some(ref quota) = cached_val {
-                            profile.quota = Some(quota.clone());
+                // Tests set this (debug builds only): never read the real credential store or call Google.
+                let test_bypass = cfg!(debug_assertions) && std::env::var("BYPASS_SYNC_ACTIVE_PROFILE").is_ok();
+                if !has_valid_cache && !test_bypass {
+                    let credential_bytes = if profile.is_active {
+                        self.credentials.read_active().ok()
+                    } else {
+                        self.load_profile_credential(profile.metadata.profile_id, None)
+                            .ok()
+                    };
+
+                    if let Some(ref bytes) = credential_bytes {
+                        if profile.is_active {
+                            if let Some(access_token) = fresh_access_token(bytes, Utc::now()) {
+                                let should_fetch = {
+                                    let mut fetching = lock_quota_fetching();
+                                    if fetching.contains(email) {
+                                        false
+                                    } else {
+                                        fetching.insert(email.clone());
+                                        true
+                                    }
+                                };
+
+                                if should_fetch {
+                                    let email_clone = email.clone();
+                                    let logger_clone = self.logger.clone();
+
+                                    tokio::spawn(async move {
+                                        match QuotaDecryptor::fetch_quota_summary(&access_token).await {
+                                            Ok(live_quota) => {
+                                                let mut cache = lock_quota_cache();
+                                                cache.insert(
+                                                    email_clone.clone(),
+                                                    (live_quota, std::time::Instant::now()),
+                                                );
+                                            }
+                                            Err(err) => {
+                                                logger_clone.warn(
+                                                    None,
+                                                    "quota",
+                                                    format!(
+                                                        "Failed to fetch quota summary in background for {}: {}",
+                                                        email_clone, err
+                                                    ),
+                                                );
+                                            }
+                                        }
+                                        lock_quota_fetching().remove(&email_clone);
+                                    });
+                                }
+                                continue;
+                            }
                         }
 
-                        if !has_valid_cache {
+                        if let Some(ref refresh_token) = parse_refresh_token(bytes) {
                             let should_fetch = {
                                 let mut fetching = lock_quota_fetching();
-                                if fetching.contains(email) {
+                                if fetching.contains(email) || crate::quota::quota_checks_paused() {
                                     false
                                 } else {
                                     fetching.insert(email.clone());
@@ -748,9 +823,7 @@ impl SwitcherService {
                                 let logger_clone = self.logger.clone();
 
                                 tokio::spawn(async move {
-                                    match QuotaDecryptor::fetch_live_quota(&refresh_token_clone)
-                                        .await
-                                    {
+                                    match QuotaDecryptor::fetch_live_quota(&refresh_token_clone).await {
                                         Ok(live_quota) => {
                                             let mut cache = lock_quota_cache();
                                             cache.insert(
@@ -758,6 +831,7 @@ impl SwitcherService {
                                                 (live_quota, std::time::Instant::now()),
                                             );
                                         }
+                                        Err(err) if crate::quota::is_quota_paused_error(&err) => {}
                                         Err(err) => {
                                             logger_clone.warn(
                                                 None,
@@ -849,6 +923,7 @@ impl SwitcherService {
                                 let handle = tokio::spawn(async move {
                                     match QuotaDecryptor::fetch_live_quota(&refresh_token).await {
                                         Ok(live_quota) => Some((email, live_quota)),
+                                        Err(err) if crate::quota::is_quota_paused_error(&err) => None,
                                         Err(err) => {
                                             logger_clone.warn(
                                                 None,
@@ -893,7 +968,7 @@ impl SwitcherService {
         Ok(())
     }
 
-    pub(crate) fn save_profile_metadata(
+    pub fn save_profile_metadata(
         &self,
         profile_id: Uuid,
         metadata: &ProfileMetadata,
@@ -1108,6 +1183,7 @@ impl SwitcherService {
                             format!("Target quota fetched and cached successfully in background"),
                         );
                     }
+                    Err(err) if crate::quota::is_quota_paused_error(&err) => {}
                     Err(err) => {
                         logger_clone.warn(
                             None,

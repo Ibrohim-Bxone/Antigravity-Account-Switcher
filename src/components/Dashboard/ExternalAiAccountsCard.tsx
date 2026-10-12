@@ -243,6 +243,9 @@ export default function ExternalAiAccountsCard() {
           if (res.claude) {
             const c = res.claude;
             const existingIdx = updated.findIndex((a) => a.provider === "claude" && (a.id.startsWith("claude-live") || (a.source && a.source.includes("OAuth"))));
+            const claudeSource = c.source === "cached_oauth"
+              ? `Anthropic OAuth (cached) · ${c.last_updated_str}`
+              : `Live Anthropic OAuth · ${c.last_updated_str}`;
             const claudeItem: ExternalAccountQuota = {
               id: existingIdx >= 0 ? updated[existingIdx].id : "claude-live-primary",
               provider: "claude",
@@ -262,7 +265,7 @@ export default function ExternalAiAccountsCard() {
               auto_recover: true,
               last_calculated_at: Date.now(),
               status: c.status as any,
-              source: "Live Anthropic OAuth",
+              source: claudeSource,
             };
             if (existingIdx >= 0) {
               updated[existingIdx] = claudeItem;
@@ -275,6 +278,7 @@ export default function ExternalAiAccountsCard() {
           if (res.codex) {
             const x = res.codex;
             const existingIdx = updated.findIndex((a) => a.provider === "chatgpt" && (a.id.startsWith("codex-live") || (a.source && a.source.includes("Rollout"))));
+            const codexSource = `Live OpenAI Rollout Log · ${x.last_updated_str}`;
             const codexItem: ExternalAccountQuota = {
               id: existingIdx >= 0 ? updated[existingIdx].id : "codex-live-primary",
               provider: "chatgpt",
@@ -291,7 +295,7 @@ export default function ExternalAiAccountsCard() {
               auto_recover: true,
               last_calculated_at: Date.now(),
               status: x.status as any,
-              source: "Live OpenAI Rollout Log",
+              source: codexSource,
             };
             if (existingIdx >= 0) {
               updated[existingIdx] = codexItem;
