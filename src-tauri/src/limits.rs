@@ -9,7 +9,15 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+pub fn effective_used(used: f64, resets_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> f64 {
+    match resets_at {
+        Some(reset) if now >= reset => 0.0,
+        _ => used,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveQuotaItem {
@@ -113,6 +121,86 @@ struct AnthropicCreditDetails {
 
 static CLAUDE_CACHE: Mutex<Option<(Instant, LiveQuotaItem)>> = Mutex::new(None);
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeUsageDiskCache {
+    item: LiveQuotaItem,
+    five_hour_raw_used: f64,
+    seven_day_raw_used: f64,
+    five_hour_resets_at: Option<DateTime<Utc>>,
+    seven_day_resets_at: Option<DateTime<Utc>>,
+    fetched_at: DateTime<Utc>,
+}
+
+fn claude_disk_cache_path() -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA")?;
+    Some(Path::new(&local).join("AntigravitySwitcher").join("claude_usage_cache.json"))
+}
+
+fn save_claude_disk_cache(cache: &ClaudeUsageDiskCache) {
+    if let Some(path) = claude_disk_cache_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string(cache) {
+            let _ = std::fs::write(&path, json);
+        }
+    }
+}
+
+fn load_claude_disk_cache(now_utc: DateTime<Utc>) -> Option<LiveQuotaItem> {
+    let path = claude_disk_cache_path()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let cache: ClaudeUsageDiskCache = serde_json::from_str(&content).ok()?;
+
+    let five_used = effective_used(cache.five_hour_raw_used, cache.five_hour_resets_at, now_utc);
+    let five_rem = (100.0 - five_used).max(0.0).min(100.0);
+
+    let (five_hour_target_time, five_hour_reset_time) = match cache.five_hour_resets_at {
+        Some(dt) if now_utc >= dt => (String::new(), "Window reset".to_string()),
+        Some(dt) => {
+            let local = dt.with_timezone(&chrono::Local);
+            let target = local.format("%H:%M").to_string();
+            let reset = format!("Resets at {}", target);
+            (target, reset)
+        }
+        None => (String::new(), "Active window".to_string()),
+    };
+
+    let weekly_used = effective_used(cache.seven_day_raw_used, cache.seven_day_resets_at, now_utc);
+    let weekly_rem = (100.0 - weekly_used).max(0.0).min(100.0);
+
+    let weekly_reset_time = match cache.seven_day_resets_at {
+        Some(dt) if now_utc >= dt => "Window reset".to_string(),
+        Some(dt) => {
+            let local = dt.with_timezone(&chrono::Local);
+            local.format("Resets %a %I:%M %p").to_string()
+        }
+        None => "Active cycle".to_string(),
+    };
+
+    let status = if five_rem <= 0.0 || weekly_rem <= 0.0 {
+        "exhausted".to_string()
+    } else if five_rem < 20.0 || weekly_rem < 20.0 {
+        "low".to_string()
+    } else {
+        "active".to_string()
+    };
+
+    let mut item = cache.item;
+    item.five_hour_used_percent = five_used.round();
+    item.five_hour_remaining_percent = five_rem.round();
+    item.five_hour_target_time = five_hour_target_time;
+    item.five_hour_reset_time = five_hour_reset_time;
+    item.weekly_used_percent = weekly_used.round();
+    item.weekly_remaining_percent = weekly_rem.round();
+    item.weekly_reset_time = weekly_reset_time;
+    item.status = status;
+    item.source = "cached_oauth".to_string();
+    item.last_updated_str = cache.fetched_at.with_timezone(&chrono::Local).format("%H:%M").to_string();
+
+    Some(item)
+}
+
 async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
     // 1. Check in-memory cache first (fresh within 45 seconds to avoid Anthropic 429 Rate Limits)
     if let Ok(guard) = CLAUDE_CACHE.lock() {
@@ -123,67 +211,36 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         }
     }
 
-    let user_profile = std::env::var_os("USERPROFILE")?;
+    let user_profile = match std::env::var_os("USERPROFILE") {
+        Some(p) => p,
+        None => return load_claude_disk_cache(Utc::now()),
+    };
     let creds_path = Path::new(&user_profile)
         .join(".claude")
         .join(".credentials.json");
 
     if !creds_path.exists() {
-        // Fallback to cache if available
-        if let Ok(guard) = CLAUDE_CACHE.lock() {
-            if let Some((_, ref item)) = *guard {
-                return Some(item.clone());
-            }
-        }
-        return None;
+        return load_claude_disk_cache(Utc::now());
     }
 
     let file_content = match std::fs::read_to_string(&creds_path) {
         Ok(c) => c,
-        Err(_) => {
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        Err(_) => return load_claude_disk_cache(Utc::now()),
     };
 
     let parsed: ClaudeCredentialsFile = match serde_json::from_str(&file_content) {
         Ok(p) => p,
-        Err(_) => {
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        Err(_) => return load_claude_disk_cache(Utc::now()),
     };
 
     let oauth = match parsed.claude_ai_oauth {
         Some(o) => o,
-        None => {
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        None => return load_claude_disk_cache(Utc::now()),
     };
 
     let token = match oauth.access_token {
         Some(t) if !t.trim().is_empty() => t,
-        _ => {
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        _ => return load_claude_disk_cache(Utc::now()),
     };
 
     // QA Check: Check token expiry. NEVER refresh token automatically to avoid invalidating user's Claude Code session.
@@ -191,12 +248,7 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         let now_ms = chrono::Utc::now().timestamp_millis();
         if now_ms >= exp {
             log::warn!("Claude Code accessToken expired at {}, skipping remote poll", exp);
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
+            return load_claude_disk_cache(Utc::now());
         }
     }
 
@@ -205,14 +257,7 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         .connect_timeout(Duration::from_secs(2))
         .build() {
         Ok(c) => c,
-        Err(_) => {
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        Err(_) => return load_claude_disk_cache(Utc::now()),
     };
 
     let resp = match client
@@ -222,87 +267,76 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         .send()
         .await {
         Ok(r) => r,
-        Err(_) => {
-            // Defensive: On network timeout or rate limit, return last known good data from cache
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        Err(_) => return load_claude_disk_cache(Utc::now()),
     };
 
     if !resp.status().is_success() {
-        // Defensive: If 429 Too Many Requests, serve cached item gracefully
-        if let Ok(guard) = CLAUDE_CACHE.lock() {
-            if let Some((_, ref item)) = *guard {
-                return Some(item.clone());
-            }
-        }
-        return None;
+        return load_claude_disk_cache(Utc::now());
     }
 
     let usage: AnthropicUsageResponse = match resp.json().await {
         Ok(u) => u,
-        Err(_) => {
-            if let Ok(guard) = CLAUDE_CACHE.lock() {
-                if let Some((_, ref item)) = *guard {
-                    return Some(item.clone());
-                }
-            }
-            return None;
-        }
+        Err(_) => return load_claude_disk_cache(Utc::now()),
     };
 
-    let five_hour_used = usage.five_hour.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
-    let five_hour_rem = (100.0 - five_hour_used).max(0.0).min(100.0);
+    let now_utc = Utc::now();
 
-    let five_hour_target_time = usage
+    let five_resets_at = usage
         .five_hour
         .as_ref()
         .and_then(|w| w.resets_at.as_deref())
-        .and_then(|raw_iso| chrono::DateTime::parse_from_rfc3339(raw_iso).ok())
-        .map(|dt| {
-            let local = dt.with_timezone(&chrono::Local);
-            local.format("%H:%M").to_string()
-        })
-        .unwrap_or_else(|| "Active window".to_string());
+        .and_then(|raw_iso| DateTime::parse_from_rfc3339(raw_iso).ok())
+        .map(|dt| dt.with_timezone(&Utc));
 
-    let five_hour_reset_time = if five_hour_target_time == "Active window" {
-        "Active window".to_string()
-    } else {
-        format!("Resets at {}", five_hour_target_time)
+    let raw_five_used = usage.five_hour.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
+    let five_used = effective_used(raw_five_used, five_resets_at, now_utc);
+    let five_rem = (100.0 - five_used).max(0.0).min(100.0);
+
+    let (five_hour_target_time, five_hour_reset_time) = match five_resets_at {
+        Some(dt) if now_utc >= dt => (String::new(), "Window reset".to_string()),
+        Some(dt) => {
+            let local = dt.with_timezone(&chrono::Local);
+            let target = local.format("%H:%M").to_string();
+            let reset = format!("Resets at {}", target);
+            (target, reset)
+        }
+        None => (String::new(), "Active window".to_string()),
     };
 
-    let weekly_used = usage.seven_day.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
-    let weekly_rem = (100.0 - weekly_used).max(0.0).min(100.0);
-
-    let weekly_reset_time = usage
+    let weekly_resets_at = usage
         .seven_day
         .as_ref()
         .and_then(|w| w.resets_at.as_deref())
-        .and_then(|raw_iso| chrono::DateTime::parse_from_rfc3339(raw_iso).ok())
-        .map(|dt| {
+        .and_then(|raw_iso| DateTime::parse_from_rfc3339(raw_iso).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
+    let raw_weekly_used = usage.seven_day.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
+    let weekly_used = effective_used(raw_weekly_used, weekly_resets_at, now_utc);
+    let weekly_rem = (100.0 - weekly_used).max(0.0).min(100.0);
+
+    let weekly_reset_time = match weekly_resets_at {
+        Some(dt) if now_utc >= dt => "Window reset".to_string(),
+        Some(dt) => {
             let local = dt.with_timezone(&chrono::Local);
             local.format("Resets %a %I:%M %p").to_string()
-        })
-        .unwrap_or_else(|| "Active cycle".to_string());
+        }
+        None => "Active cycle".to_string(),
+    };
 
     let (credit_rem, credit_total, credit_exp) = if let Some(credits) = usage.iguana_necktie {
         let exp_formatted = credits
             .resets_at
             .as_deref()
-            .and_then(|iso| chrono::DateTime::parse_from_rfc3339(iso).ok())
+            .and_then(|iso| DateTime::parse_from_rfc3339(iso).ok())
             .map(|dt| dt.with_timezone(&chrono::Local).format("Expires %I:%M %p, %b %d").to_string());
         (credits.remaining_dollars, credits.limit_dollars, exp_formatted)
     } else {
         (None, None, None)
     };
 
-    let status = if five_hour_rem <= 0.0 || weekly_rem <= 0.0 {
+    let status = if five_rem <= 0.0 || weekly_rem <= 0.0 {
         "exhausted".to_string()
-    } else if five_hour_rem < 20.0 || weekly_rem < 20.0 {
+    } else if five_rem < 20.0 || weekly_rem < 20.0 {
         "low".to_string()
     } else {
         "active".to_string()
@@ -310,14 +344,15 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
 
     let plan = format_claude_plan(oauth.subscription_type.as_deref());
     let name = format!("{} (Claude Code)", plan);
+    let last_updated_str = chrono::Local::now().format("%H:%M").to_string();
 
     let item = LiveQuotaItem {
         provider: "claude".to_string(),
         name,
         plan,
         model: String::new(),
-        five_hour_used_percent: five_hour_used.round(),
-        five_hour_remaining_percent: five_hour_rem.round(),
+        five_hour_used_percent: five_used.round(),
+        five_hour_remaining_percent: five_rem.round(),
         five_hour_reset_time,
         five_hour_target_time,
         weekly_used_percent: weekly_used.round(),
@@ -328,8 +363,17 @@ async fn fetch_claude_live_quota() -> Option<LiveQuotaItem> {
         cloud_credits_expiry: credit_exp,
         status,
         source: "live_oauth".to_string(),
-        last_updated_str: chrono::Local::now().format("%H:%M:%S").to_string(),
+        last_updated_str,
     };
+
+    save_claude_disk_cache(&ClaudeUsageDiskCache {
+        item: item.clone(),
+        five_hour_raw_used: raw_five_used,
+        seven_day_raw_used: raw_weekly_used,
+        five_hour_resets_at: five_resets_at,
+        seven_day_resets_at: weekly_resets_at,
+        fetched_at: now_utc,
+    });
 
     if let Ok(mut guard) = CLAUDE_CACHE.lock() {
         *guard = Some((Instant::now(), item.clone()));
@@ -471,33 +515,43 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
     let secondary = rate_limits.secondary.as_ref();
 
     let raw_five_used = primary.and_then(|p| p.used_percent).unwrap_or(0.0);
-    let weekly_used = secondary.and_then(|s| s.used_percent).unwrap_or(0.0);
 
-    // 5-Hour and Weekly limits are INDEPENDENT rolling windows!
-    let five_used = raw_five_used;
+    let now_utc = Utc::now();
+
+    let primary_resets_at = primary
+        .and_then(|p| p.resets_at)
+        .and_then(|ts| DateTime::from_timestamp(ts, 0));
+
+    let five_used = effective_used(raw_five_used, primary_resets_at, now_utc);
     let five_rem = (100.0 - five_used).max(0.0).min(100.0);
 
-    let five_target_time = primary
-        .and_then(|p| p.resets_at)
-        .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
-        .map(|dt| {
+    let (five_target_time, five_reset_time) = match primary_resets_at {
+        Some(dt) if now_utc >= dt => (String::new(), "Window reset".to_string()),
+        Some(dt) => {
             let local = dt.with_timezone(&chrono::Local);
-            local.format("%H:%M").to_string()
-        })
-        .unwrap_or_else(|| "19:41".to_string());
+            let target = local.format("%H:%M").to_string();
+            let reset = format!("Resets at {}", target);
+            (target, reset)
+        }
+        None => (String::new(), "Active window".to_string()),
+    };
 
-    let five_reset_time = format!("Resets at {}", five_target_time);
+    let secondary_resets_at = secondary
+        .and_then(|s| s.resets_at)
+        .and_then(|ts| DateTime::from_timestamp(ts, 0));
 
+    let raw_weekly_used = secondary.and_then(|s| s.used_percent).unwrap_or(0.0);
+    let weekly_used = effective_used(raw_weekly_used, secondary_resets_at, now_utc);
     let weekly_rem = (100.0 - weekly_used).max(0.0).min(100.0);
 
-    let weekly_reset_time = secondary
-        .and_then(|s| s.resets_at)
-        .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
-        .map(|dt| {
+    let weekly_reset_time = match secondary_resets_at {
+        Some(dt) if now_utc >= dt => "Window reset".to_string(),
+        Some(dt) => {
             let local = dt.with_timezone(&chrono::Local);
             local.format("Resets %a %b %d").to_string()
-        })
-        .unwrap_or_else(|| "Active cycle".to_string());
+        }
+        None => "Active cycle".to_string(),
+    };
 
     let plan = format_codex_plan(rate_limits.plan_type.as_deref());
     let name = format!("{} (Codex)", plan);
@@ -527,7 +581,13 @@ fn fetch_codex_live_quota() -> Option<LiveQuotaItem> {
         cloud_credits_expiry: None,
         status,
         source: "live_rollout_log".to_string(),
-        last_updated_str: chrono::Local::now().format("%H:%M:%S").to_string(),
+        last_updated_str: if !best_timestamp.is_empty() {
+            DateTime::parse_from_rfc3339(&best_timestamp)
+                .map(|dt| dt.with_timezone(&chrono::Local).format("%H:%M").to_string())
+                .unwrap_or_else(|_| chrono::Local::now().format("%H:%M").to_string())
+        } else {
+            chrono::Local::now().format("%H:%M").to_string()
+        },
     })
 }
 
@@ -553,6 +613,20 @@ pub async fn get_external_ai_quotas() -> Result<ExternalAiQuotasResponse, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_effective_used() {
+        let now = Utc::now();
+        let past = now - chrono::Duration::minutes(30);
+        let future = now + chrono::Duration::minutes(30);
+
+        // Reset time passed -> window starts over
+        assert_eq!(effective_used(70.0, Some(past), now), 0.0);
+        // Reset still ahead -> unchanged
+        assert_eq!(effective_used(70.0, Some(future), now), 70.0);
+        // Unknown reset -> unchanged
+        assert_eq!(effective_used(70.0, None, now), 70.0);
+    }
 
     #[test]
     fn test_format_claude_plan() {
